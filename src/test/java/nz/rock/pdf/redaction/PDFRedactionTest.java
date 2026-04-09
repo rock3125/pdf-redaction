@@ -17,8 +17,8 @@ public class PDFRedactionTest {
         // load our test PDF
         byte[] originalPDF = loadBinary("/saratoga-townhouse-updated-inclusions.pdf");
         assertTrue(originalPDF.length > 0);
-        checkPDF(originalPDF, 0, Arrays.asList("earthworks"), null);
-        checkPDF(originalPDF, 1, Arrays.asList("external"), null);
+        checkPDF(originalPDF, 0, List.of("earthworks"), null);
+        checkPDF(originalPDF, 1, List.of("external"), null);
 
         // red boxes document
         PDDocument redDocument = Loader.loadPDF(originalPDF);
@@ -32,8 +32,8 @@ public class PDFRedactionTest {
         redDocument.close();
         byte[] redBoxPDF = redBOS.toByteArray();
 
-        checkPDF(redBoxPDF, 0, Arrays.asList("earthworks"), null);
-        checkPDF(redBoxPDF, 1, Arrays.asList("external"), null);
+        checkPDF(redBoxPDF, 0, List.of("earthworks"), null);
+        checkPDF(redBoxPDF, 1, List.of("external"), null);
 
         // black boxes document
         PDDocument blackDocument = Loader.loadPDF(originalPDF);
@@ -47,9 +47,9 @@ public class PDFRedactionTest {
         blackDocument.close();
         byte[] blackBOXPdf = blackBOS.toByteArray();
 
-        checkPDF(blackBOXPdf, 0, Arrays.asList("rear"),
+        checkPDF(blackBOXPdf, 0, List.of("rear"),
                 Arrays.asList("earthworks", "roofing", "farm", "external"));
-        checkPDF(blackBOXPdf, 1, Arrays.asList("externally"),
+        checkPDF(blackBOXPdf, 1, List.of("externally"),
                 Arrays.asList("earthworks", "roofing", "farm"));
 
 //        writeBinary("test1.pdf", redBoxPDF);
@@ -62,21 +62,21 @@ public class PDFRedactionTest {
         // load our test PDF
         byte[] originalPDF = loadBinary("/rotated_90_area.pdf");
         assertTrue(originalPDF.length > 0);
-        checkPDF(originalPDF, 0, Arrays.asList("Engineering"), null);
+        checkPDF(originalPDF, 0, List.of("Engineering"), null);
 
         // black boxes document
         PDDocument blackDocument = Loader.loadPDF(originalPDF);
         // draw the red boxes, leave the text
         PDFRedactor blackStripper = new PDFRedactor(blackDocument, true);
         blackStripper.addRegion(0, 10.0f, 10.0f, 100.0f, 100.0f);
-        blackStripper.setTextRedactionList(Arrays.asList("Engineering"));
+        blackStripper.setTextRedactionList(List.of("Engineering"));
         blackStripper.apply();
         ByteArrayOutputStream blackBOS = new ByteArrayOutputStream();
         blackDocument.save(blackBOS);
         blackDocument.close();
         byte[] blackBOXPdf = blackBOS.toByteArray();
 
-        checkPDF(blackBOXPdf, 0, null, Arrays.asList("Engineering"));
+        checkPDF(blackBOXPdf, 0, null, List.of("Engineering"));
 
 //        writeBinary("test3.pdf", blackBOXPdf);
     }
@@ -87,21 +87,21 @@ public class PDFRedactionTest {
         // load our test PDF
         byte[] originalPDF = loadBinary("/rotated_180_area.pdf");
         assertTrue(originalPDF.length > 0);
-        checkPDF(originalPDF, 0, Arrays.asList("richiesta"), null);
+        checkPDF(originalPDF, 0, List.of("richiesta"), null);
 
         // black boxes document
         PDDocument blackDocument = Loader.loadPDF(originalPDF);
         // draw the red boxes, leave the text
         PDFRedactor blackStripper = new PDFRedactor(blackDocument, true);
         blackStripper.addRegion(0, 10.0f, 10.0f, 100.0f, 100.0f);
-        blackStripper.setTextRedactionList(Arrays.asList("richiesta"));
+        blackStripper.setTextRedactionList(List.of("richiesta"));
         blackStripper.apply();
         ByteArrayOutputStream blackBOS = new ByteArrayOutputStream();
         blackDocument.save(blackBOS);
         blackDocument.close();
         byte[] blackBOXPdf = blackBOS.toByteArray();
 
-        checkPDF(blackBOXPdf, 0, null, Arrays.asList("richiesta"));
+        checkPDF(blackBOXPdf, 0, null, List.of("richiesta"));
 
 //        writeBinary("test4.pdf", blackBOXPdf);
     }
@@ -112,21 +112,21 @@ public class PDFRedactionTest {
         // load our test PDF
         byte[] originalPDF = loadBinary("/rotated_270_area.pdf");
         assertTrue(originalPDF.length > 0);
-        checkPDF(originalPDF, 0, Arrays.asList("Zaglio"), null);
+        checkPDF(originalPDF, 0, List.of("Zaglio"), null);
 
         // black boxes document
         PDDocument blackDocument = Loader.loadPDF(originalPDF);
         // draw the red boxes, leave the text
         PDFRedactor blackStripper = new PDFRedactor(blackDocument, true);
         blackStripper.addRegion(0, 10.0f, 10.0f, 100.0f, 100.0f);
-        blackStripper.setTextRedactionList(Arrays.asList("Zaglio"));
+        blackStripper.setTextRedactionList(List.of("Zaglio"));
         blackStripper.apply();
         ByteArrayOutputStream blackBOS = new ByteArrayOutputStream();
         blackDocument.save(blackBOS);
         blackDocument.close();
         byte[] blackBOXPdf = blackBOS.toByteArray();
 
-        checkPDF(blackBOXPdf, 0, null, Arrays.asList("Zaglio"));
+        checkPDF(blackBOXPdf, 0, null, List.of("Zaglio"));
 
 //        writeBinary("test5.pdf", blackBOXPdf);
     }
