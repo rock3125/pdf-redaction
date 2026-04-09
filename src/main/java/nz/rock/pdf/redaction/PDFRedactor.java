@@ -211,10 +211,14 @@ public class PDFRedactor extends PDFContentStreamEditor {
      */
     public void addRegion(int page, float x, float y, float w, float h) {
         PDPage pdPage = document.getPage(page);
-        float height = pdPage.getMediaBox().getHeight();
-        regions.add(new RectangleAndPage(page, false, new Rectangle2D.Float(x, height - y, w, -h)));
-    }
+        float pageHeight = pdPage.getMediaBox().getHeight();
 
+        // To keep the height positive, we calculate the absolute lowest Y-point
+        // of the rectangle (bottom edge) and use positive 'h'
+        float bottomY = pageHeight - y - h;
+
+        regions.add(new RectangleAndPage(page, false, new Rectangle2D.Float(x, bottomY, w, h)));
+    }
 
     /**
      * set the list of text items to redact
@@ -496,8 +500,17 @@ public class PDFRedactor extends PDFContentStreamEditor {
 
                 if (rect.intersects(imageLocation)) {
                     if (awtImage == null) {
-                        // Extract the image only once if it intersects multiple regions
                         awtImage = pdImage.getImage();
+
+                        // Ensure the image is in a format that supports Graphics2D editing
+                        if (awtImage.getType() != BufferedImage.TYPE_INT_ARGB && awtImage.getType() != BufferedImage.TYPE_INT_RGB) {
+                            BufferedImage converted = new BufferedImage(awtImage.getWidth(), awtImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
+                            Graphics2D g = converted.createGraphics();
+                            g.drawImage(awtImage, 0, 0, null);
+                            g.dispose();
+                            awtImage = converted;
+                        }
+
                         g2d = awtImage.createGraphics();
                         g2d.setColor(Color.BLACK);
                     }

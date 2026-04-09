@@ -53,7 +53,7 @@ public class PDFRedactionTest {
                 Arrays.asList("earthworks", "roofing", "farm"));
 
 //        writeBinary("test1.pdf", redBoxPDF);
-//        writeBinary("test2.pdf", blackBOXPdf);
+        writeBinary("test2.pdf", blackBOXPdf);
     }
 
 
@@ -78,7 +78,7 @@ public class PDFRedactionTest {
 
         checkPDF(blackBOXPdf, 0, null, List.of("Engineering"));
 
-//        writeBinary("test3.pdf", blackBOXPdf);
+        writeBinary("test3.pdf", blackBOXPdf);
     }
 
 
