@@ -111,12 +111,21 @@ public class PDFRedactor extends PDFContentStreamEditor {
                 int offset = pageText.indexOf(textLower);
                 while (offset >= 0) {
                     // is this text valid?
-                    char ch = ' ';
+                    char endCh = ' ';
                     if (offset + textLength < pageText.length()) {
-                        ch = pageText.charAt(offset + textLength);
+                        endCh = pageText.charAt(offset + textLength);
                     }
-                    // valid ending of a word?
-                    if (!(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9')) {
+                    boolean validEnd = !(endCh >= 'a' && endCh <= 'z' || endCh >= '0' && endCh <= '9');
+
+                    // Check leading character
+                    char startCh = ' ';
+                    if (offset > 0) {
+                        startCh = pageText.charAt(offset - 1);
+                    }
+                    boolean validStart = !(startCh >= 'a' && startCh <= 'z' || startCh >= '0' && startCh <= '9');
+
+                    // Only redact if BOTH boundaries are valid
+                    if (validStart && validEnd) {
                         // add a rectangle to cover the text, so it is censored
                         TextPosition first = pageList.get(offset);
                         TextPosition last = pageList.get(offset + textLength - 1);
@@ -515,27 +524,24 @@ public class PDFRedactor extends PDFContentStreamEditor {
                 page.getMediaBox().getWidth(), page.getMediaBox().getHeight()
         );
 
-        PDPageContentStream pageContentStream = new PDPageContentStream(this.document, page, PDPageContentStream.AppendMode.APPEND, true);
-
-        if (redact) {
-            // if in redact mode, we draw black filled rectangles
-            pageContentStream.setStrokingColor(Color.BLACK);
-            for (RectangleAndPage location : regions) {
-                if (checkPageAndDrawRect(pageContentStream, location, pageData)) {
-                    pageContentStream.fill();
+        try (PDPageContentStream pageContentStream = new PDPageContentStream(this.document, page, PDPageContentStream.AppendMode.APPEND, true)) {
+            if (redact) {
+                pageContentStream.setStrokingColor(Color.BLACK);
+                for (RectangleAndPage location : regions) {
+                    if (checkPageAndDrawRect(pageContentStream, location, pageData)) {
+                        pageContentStream.fill();
+                    }
                 }
+                pageContentStream.stroke();
+            } else {
+                pageContentStream.setStrokingColor(Color.RED);
+                for (RectangleAndPage location : regions) {
+                    checkPageAndDrawRect(pageContentStream, location, pageData);
+                }
+                pageContentStream.stroke();
             }
-            pageContentStream.stroke();
-
-        } else {
-            // otherwise we draw red clear rectangles over the text to indicate what might be censored
-            pageContentStream.setStrokingColor(Color.RED);
-            for (RectangleAndPage location : regions) {
-                checkPageAndDrawRect(pageContentStream, location, pageData);
-            }
-            pageContentStream.stroke();
         }
-        pageContentStream.close();
+
     }
 
 

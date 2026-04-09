@@ -65,12 +65,14 @@ public class PDFContentStreamEditor extends PDFTextStripper {
     @Override
     public void processPage(PDPage page) throws IOException {
         PDStream stream = new PDStream(document);
-        OutputStream replacementStream;
-        replacement = new ContentStreamWriter(replacementStream = stream.createOutputStream(COSName.FLATE_DECODE));
-        super.processPage(page);
-        replacementStream.close();
+        try (OutputStream replacementStream = stream.createOutputStream(COSName.FLATE_DECODE)) {
+            replacement = new ContentStreamWriter(replacementStream);
+            super.processPage(page);
+        } finally {
+            // Ensure replacement is null
+            replacement = null;
+        }
         page.setContents(stream);
-        replacement = null;
     }
 
     // PDFStreamEngine overrides to allow editing
