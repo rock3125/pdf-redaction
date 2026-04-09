@@ -16,7 +16,7 @@ import java.util.List;
  */
 public class PDFTextGatherer extends PDFContentStreamEditor {
 
-    // the PDF document
+    // the PDF document we're working on
     private final PDDocument document;
     // the text positions seen
     private final HashMap<Integer, List<TextPosition>> textByPage = new HashMap<>();
@@ -37,12 +37,10 @@ public class PDFTextGatherer extends PDFContentStreamEditor {
         super.processTextPosition(text);
     }
 
-
     // run the text gatherer
     public void apply() throws IOException {
         this.getText(document);
     }
-
 
     /**
      * get the text for a given page - return empty if dne
@@ -61,7 +59,6 @@ public class PDFTextGatherer extends PDFContentStreamEditor {
         }
         return "";
     }
-
 
     /**
      * get all the text positions for a given page (zero offset)
