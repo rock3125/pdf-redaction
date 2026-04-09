@@ -158,11 +158,11 @@ public class PDFContentStreamEditor extends PDFTextStripper {
                     PDRectangle bbox = pdForm.getBBox();
 
                     // Check if the form is "huge" (roughly the size of the page)
-                    boolean isFullPageForm = bbox.getWidth() >= (getCurrentPage().getCropBox().getWidth() * 0.9f);
+                    boolean isFullPageForm = bbox.getWidth() >= (getCurrentPage().getCropBox().getWidth() * 0.9f) &&
+                            bbox.getHeight() >= (getCurrentPage().getCropBox().getHeight() * 0.9f);
 
                     if (isFullPageForm) {
-                        // DO NOT DROP. Instead, step inside and redact the individual
-                        // operators (text/images) inside this form.
+                        // Step inside and redact the individual, operators (text/images) inside this full-page form
                         showForm(pdForm);
 
                     } else {
