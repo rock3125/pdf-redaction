@@ -1,9 +1,16 @@
 package nz.rock.pdf.redaction;
 
 import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.junit.jupiter.api.Test;
 
+import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.*;
 import java.util.Arrays;
 import java.util.List;
@@ -143,6 +150,9 @@ public class PDFRedactionTest {
 
         // black boxes document
         PDDocument blackDocument = Loader.loadPDF(originalPDF);
+        ImagePixelAnalyzer ipa = new  ImagePixelAnalyzer();
+        long originalBlackPixels = ipa.countAllBlackPixels(blackDocument);
+
         // draw the red boxes, leave the text
         PDFRedactor blackStripper = new PDFRedactor(blackDocument, true);
         blackStripper.addRegion(0, 10.0f, 10.0f, 500.0f, 500.0f);
@@ -151,7 +161,10 @@ public class PDFRedactionTest {
         blackDocument.save(blackBOS);
         blackDocument.close();
         byte[] blackBOXPdf = blackBOS.toByteArray();
-        writeBinary("test6.pdf", blackBOXPdf);
+
+        long blackPixels = ipa.countAllBlackPixels(Loader.loadPDF(blackBOXPdf));
+        assertTrue(blackPixels > originalBlackPixels + 1000L);
+//        writeBinary("test6.pdf", blackBOXPdf);
     }
 
     /////////////////////////////////////////////////////////////////////
