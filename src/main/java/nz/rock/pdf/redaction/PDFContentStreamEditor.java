@@ -17,6 +17,7 @@ import org.apache.pdfbox.util.Matrix;
 
 import java.awt.geom.GeneralPath;
 import java.awt.geom.Rectangle2D;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
@@ -31,9 +32,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
     private final PDDocument document; // the PDF document we're processing
     private ContentStreamWriter replacement = null; // redaction destination stream (create new PDF)
     private boolean inOperator = false;
-
-    // Tracks recursion level when entering nested PDF Form XObjects
-    private int formDepth = 0;
+    private boolean useReplacement = false;
 
     public PDFContentStreamEditor(PDDocument document) {
         this.document = document;
@@ -75,14 +74,37 @@ public class PDFContentStreamEditor extends PDFTextStripper {
         page.setContents(stream);
     }
 
-    // forms need "opening up" to see what's inside them - recursive processing
     @Override
     public void showForm(PDFormXObject form) throws IOException {
-        // Increment depth so we know we are inside a nested XObject
-        formDepth++;
-        // Standard PDFBox processing: this will trigger processOperator for the form's internal stream
-        super.showForm(form);
-        formDepth--;
+
+        // Capture the current writer (page-level or parent-form-level)
+        ContentStreamWriter parentWriter = this.replacement;
+
+        // Use a temporary buffer to collect the redacted operators
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        try {
+            // Create a temporary writer for this form's content
+            this.replacement = new ContentStreamWriter(baos);
+
+            // Process the form's internal instructions
+            // This triggers processOperator() for every item inside
+            super.showForm(form);
+
+            // Force the writer to flush everything into our buffer
+            // Note: ContentStreamWriter doesn't have a close(), but we ensure the buffer is ready
+        } finally {
+            // Restore the parent writer context immediately
+            this.replacement = parentWriter;
+        }
+
+        // Now that we are out of the processing loop, overwrite the Form's stream
+        if (useReplacement) {
+            try (OutputStream os = form.getStream().createOutputStream(COSName.FLATE_DECODE)) {
+                os.write(baos.toByteArray());
+            }
+        }
+
     }
 
     /**
@@ -163,13 +185,12 @@ public class PDFContentStreamEditor extends PDFTextStripper {
 
                     if (isFullPageForm) {
                         // Step inside and redact the individual, operators (text/images) inside this full-page form
+                        useReplacement = false;
                         showForm(pdForm);
 
                     } else {
                         // If it's a small specific vector group, we can safely drop it
-                        if (shouldDropForm(pdForm)) {
-                            return;
-                        }
+                        useReplacement =  shouldDropForm(pdForm);
                         showForm(pdForm);
                     }
 
@@ -200,7 +221,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
 
             // If we are at the top level (not inside a Form XObject being unpacked),
             // write the current operator to our new page content stream.
-            if (formDepth == 0 && replacement != null) {
+            if (replacement != null) {
                 write(replacement, operator, operands);
             }
 
