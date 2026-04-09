@@ -76,7 +76,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
      * helper for constructors
      */
     private void setup() throws IOException {
-        addOperator(new PDFDrawObjectExt(this));
+        // addOperator(new PDFDrawObjectExt(this));
 
         // first get the text positions of all the pages
         PDFTextGatherer gatherer = new PDFTextGatherer(document);
@@ -473,7 +473,8 @@ public class PDFRedactor extends PDFContentStreamEditor {
         if (!redact) return; // Only modify images if we are actually redacting
 
         try {
-            PDResources resources = getCurrentPage().getResources();
+            PDResources resources = getResources();
+            if (resources == null) return;
             PDXObject xobject = resources.getXObject(name);
 
             if (!(xobject instanceof PDImageXObject pdImage)) {
@@ -481,12 +482,18 @@ public class PDFRedactor extends PDFContentStreamEditor {
             }
 
             Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+            float width = ctm.getScaleX();
+            float height = ctm.getScaleY();
             float x = ctm.getTranslateX();
             float y = ctm.getTranslateY();
-            float scaleX = ctm.getScaleX();
-            float scaleY = ctm.getScaleY();
 
-            Rectangle2D imageLocation = new Rectangle2D.Float(x, y, scaleX, scaleY);
+            // FIX 1: Normalize the bounding box to guarantee positive width/height
+            float minX = width >= 0 ? x : x + width;
+            float minY = height >= 0 ? y : y + height;
+            float absWidth = Math.abs(width);
+            float absHeight = Math.abs(height);
+
+            Rectangle2D imageLocation = new Rectangle2D.Float(minX, minY, absWidth, absHeight);
             boolean imageModified = false;
 
             BufferedImage awtImage = null;
@@ -502,7 +509,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                     if (awtImage == null) {
                         awtImage = pdImage.getImage();
 
-                        // Ensure the image is in a format that supports Graphics2D editing
+                        // FIX 2: Prevent UnsupportedOperationException on Grayscale/Indexed images
                         if (awtImage.getType() != BufferedImage.TYPE_INT_ARGB && awtImage.getType() != BufferedImage.TYPE_INT_RGB) {
                             BufferedImage converted = new BufferedImage(awtImage.getWidth(), awtImage.getHeight(), BufferedImage.TYPE_INT_ARGB);
                             Graphics2D g = converted.createGraphics();
@@ -519,14 +526,21 @@ public class PDFRedactor extends PDFContentStreamEditor {
                     Rectangle2D intersection = imageLocation.createIntersection(rect);
 
                     // Map PDF bounding coordinates to Image Pixel coordinates
-                    // PDF origin is Bottom-Left, but AWT Image origin is Top-Left (Y is inverted)
                     double pixelScaleX = awtImage.getWidth() / imageLocation.getWidth();
                     double pixelScaleY = awtImage.getHeight() / imageLocation.getHeight();
 
                     int px = (int) Math.round((intersection.getX() - imageLocation.getX()) * pixelScaleX);
-                    int py = (int) Math.round((imageLocation.getMaxY() - intersection.getMaxY()) * pixelScaleY);
                     int pw = (int) Math.round(intersection.getWidth() * pixelScaleX);
                     int ph = (int) Math.round(intersection.getHeight() * pixelScaleY);
+
+                    int py;
+                    if (height >= 0) {
+                        // Standard mapping (Visual top maps to Image Y=0)
+                        py = (int) Math.round((imageLocation.getMaxY() - intersection.getMaxY()) * pixelScaleY);
+                    } else {
+                        // Flipped mapping (Visual bottom maps to Image Y=0)
+                        py = (int) Math.round((intersection.getMinY() - imageLocation.getMinY()) * pixelScaleY);
+                    }
 
                     // Draw the redaction box directly onto the image pixels
                     g2d.fillRect(px, py, pw, ph);
@@ -541,11 +555,10 @@ public class PDFRedactor extends PDFContentStreamEditor {
                 resources.put(name, newImage);
             }
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("Failed to redact image overlap: " + e.getMessage());
         }
     }
-
 
     /**
      * helper - change coordinates and width height according to the rotation of the PDF

@@ -6,62 +6,41 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdfwriter.ContentStreamWriter;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDStream;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.PDFTextStripper;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
-
-/**
- * stream processor
- *
- * take a PDF stream and allow it to be edited using callbacks
- *
- */
 public class PDFContentStreamEditor extends PDFTextStripper {
 
-    private final PDDocument document;                  // the document
-    private ContentStreamWriter replacement = null;     // the replacement stream
-    private boolean inOperator = false;                 // detected nested objects
+    private final PDDocument document;
+    private ContentStreamWriter replacement = null;
+    private boolean inOperator = false;
 
-    public PDFContentStreamEditor(PDDocument document) throws IOException{
+    // Tracks if we are inside a nested form
+    private int formDepth = 0;
+
+    public PDFContentStreamEditor(PDDocument document) {
         this.document = document;
     }
 
-    /**
-     * <p>
-     * This method retrieves the next operation before its registered
-     * listener is called. The default does nothing.
-     * </p>
-     * <p>
-     * Override this method to retrieve state information from before the
-     * operation execution.
-     * </p>
-     */
     protected void nextOperation(Operator operator, List<COSBase> operands) {
         // Do nothing
     }
 
-    /**
-     * <p>
-     * This method writes content stream operations to the target canvas. The default
-     * implementation writes them as they come, so it essentially generates identical
-     * copies of the original instructions {@link #processOperator(Operator, List)}
-     * forwards to it.
-     * </p>
-     * <p>
-     * Override this method to achieve some fancy editing effect.
-     * </p>
-     */
     protected void write(ContentStreamWriter contentStreamWriter, Operator operator, List<COSBase> operands) throws IOException {
-        contentStreamWriter.writeTokens(operands);
-        contentStreamWriter.writeToken(operator);
+        if (contentStreamWriter != null) {
+            contentStreamWriter.writeTokens(operands);
+            contentStreamWriter.writeToken(operator);
+        }
     }
 
-    // Actual editing methods
     @Override
     public void processPage(PDPage page) throws IOException {
         PDStream stream = new PDStream(document);
@@ -69,27 +48,55 @@ public class PDFContentStreamEditor extends PDFTextStripper {
             replacement = new ContentStreamWriter(replacementStream);
             super.processPage(page);
         } finally {
-            // Ensure replacement is null
             replacement = null;
         }
         page.setContents(stream);
     }
 
-    // PDFStreamEngine overrides to allow editing
     @Override
     public void showForm(PDFormXObject form) throws IOException {
-        // DON'T descend into XObjects
+        // We MUST allow descending so PDFBox parses the inner images!
+        formDepth++;
+        super.showForm(form);
+        formDepth--;
     }
 
     @Override
     protected void processOperator(Operator operator, List<COSBase> operands) throws IOException {
+        // 1. Natively intercept the "Do" (Draw Object) operator to bypass PDFTextStripper's strict filters
+        if ("Do".equals(operator.getName()) && !operands.isEmpty() && operands.get(0) instanceof COSName name) {
+            PDResources resources = getResources();
+            if (resources != null) {
+                PDXObject xobject = resources.getXObject(name);
+
+                if (xobject instanceof PDFormXObject pdForm) {
+                    // Force the engine to unpack the inner form
+                    showForm(pdForm);
+
+                } else if (xobject instanceof PDImageXObject) {
+                    // Trigger the redaction
+                    if (this instanceof PDFRedactor redactor) {
+                        redactor.drawImage(name);
+                    }
+                }
+            }
+        }
+
+        // 2. Proceed with standard stream processing
         if (inOperator) {
             super.processOperator(operator, operands);
         } else {
             inOperator = true;
             nextOperation(operator, operands);
+
             super.processOperator(operator, operands);
-            write(replacement, operator, operands);
+
+            // ONLY write to the replacement stream if we are on the main page.
+            // This prevents inner form tokens from corrupting the page stream!
+            if (formDepth == 0 && replacement != null) {
+                write(replacement, operator, operands);
+            }
+
             inOperator = false;
         }
     }
