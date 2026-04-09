@@ -94,13 +94,40 @@ public class PDFRedactor extends PDFContentStreamEditor {
         // discover all the text that needs to be redacted for each page
         for (int page = 0; page < document.getNumberOfPages(); page++) {
             List<TextPosition> pageList = textByPage.get(page);
+            if (pageList == null || pageList.isEmpty()) continue;
 
-            // turn the text into a string
             StringBuilder sb = new StringBuilder();
-            for (TextPosition tp : pageList) {
+            // Maps the index in the StringBuilder back to the index in pageList
+            List<Integer> stringIndexToTextPositionIndex = new ArrayList<>();
+
+            for (int i = 0; i < pageList.size(); i++) {
+                TextPosition tp = pageList.get(i);
+
+                // Detect if we need to insert a synthetic space before this character
+                if (i > 0) {
+                    TextPosition prev = pageList.get(i - 1);
+
+                    // Check for a line break (Y coordinate change)
+                    boolean isLineBreak = Math.abs(tp.getY() - prev.getY()) > prev.getHeight() * 0.5f;
+                    // Check for a physical space (X coordinate gap)
+                    boolean isSpace = (tp.getX() - (prev.getX() + prev.getWidth())) > (prev.getWidthOfSpace() * 0.5f);
+
+                    if (isLineBreak || isSpace) {
+                        sb.append(' ');
+                        // Map the synthetic space to the next actual character's index
+                        stringIndexToTextPositionIndex.add(i);
+                    }
+                }
+
                 String ch = tp.getUnicode();
                 sb.append(ch);
+
+                // Map each character of the unicode string to the current TextPosition
+                for (int j = 0; j < ch.length(); j++) {
+                    stringIndexToTextPositionIndex.add(i);
+                }
             }
+
             String pageText = sb.toString().toLowerCase();
 
             // look for each string inside this page list and record censors
@@ -110,39 +137,63 @@ public class PDFRedactor extends PDFContentStreamEditor {
 
                 int offset = pageText.indexOf(textLower);
                 while (offset >= 0) {
-                    // is this text valid?
+                    // Check trailing character boundary
                     char endCh = ' ';
                     if (offset + textLength < pageText.length()) {
                         endCh = pageText.charAt(offset + textLength);
                     }
                     boolean validEnd = !(endCh >= 'a' && endCh <= 'z' || endCh >= '0' && endCh <= '9');
 
-                    // Check leading character
+                    // Check leading character boundary
                     char startCh = ' ';
                     if (offset > 0) {
                         startCh = pageText.charAt(offset - 1);
                     }
                     boolean validStart = !(startCh >= 'a' && startCh <= 'z' || startCh >= '0' && startCh <= '9');
 
-                    // Only redact if BOTH boundaries are valid
                     if (validStart && validEnd) {
-                        // add a rectangle to cover the text, so it is censored
-                        TextPosition first = pageList.get(offset);
-                        TextPosition last = pageList.get(offset + textLength - 1);
-                        float w = (last.getX() - first.getX()) + last.getWidth();
-                        float h = first.getHeight() * 1.1f;
-                        regions.add(new RectangleAndPage(page, true, new Rectangle2D.Float(first.getX(), first.getPageHeight() - first.getY(), w, h)));
+                        // Translate string indices back to TextPosition list indices
+                        int firstListIndex = stringIndexToTextPositionIndex.get(offset);
+                        int lastListIndex = stringIndexToTextPositionIndex.get(offset + textLength - 1);
+
+                        float minX = Float.MAX_VALUE;
+                        float minY = Float.MAX_VALUE;
+                        float maxX = -Float.MAX_VALUE;
+                        float maxY = -Float.MAX_VALUE;
+
+                        // Iterate through every character in the word to find the absolute boundaries
+                        for (int k = firstListIndex; k <= lastListIndex; k++) {
+                            TextPosition pos = pageList.get(k);
+
+                            float px = pos.getX();
+                            float py = pos.getPageHeight() - pos.getY();
+                            float pw = pos.getWidth();
+                            float ph = pos.getHeight();
+
+                            if (px < minX) minX = px;
+                            if (py < minY) minY = py;
+                            if (px + pw > maxX) maxX = px + pw;
+                            if (py + ph > maxY) maxY = py + ph;
+                        }
+
+                        float w = maxX - minX;
+                        float h = maxY - minY;
+
+                        // Add a tiny bit of padding (e.g., 1.0f) to ensure the intersection logic
+                        // doesn't fail due to floating-point rounding errors on the edges
+                        float padding = 1.0f;
+                        regions.add(new RectangleAndPage(page, true,
+                                new Rectangle2D.Float(minX - padding, minY - padding, w + (padding * 2), h + (padding * 2))
+                        ));
                     }
                     offset = pageText.indexOf(textLower, offset + textLength);
                 }
             }
-
         }
 
         // run
         this.getText(document);
     }
-
 
     /**
      * add a region that needs to be redacted
