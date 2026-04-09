@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 public class PDFRedactionTest {
 
+    // test the redaction of a multipage pdf with vector images
     @Test
     public void testRedaction1() throws IOException {
         // load our test PDF
@@ -56,7 +57,7 @@ public class PDFRedactionTest {
 //        writeBinary("test2.pdf", blackBOXPdf);
     }
 
-
+    // test redaction in a 90 degree rotated pdf
     @Test
     public void testRedaction2() throws IOException {
         // load our test PDF
@@ -82,6 +83,7 @@ public class PDFRedactionTest {
     }
 
 
+    // test redaction in a 180 degree rotated pdf
     @Test
     public void testRedaction3() throws IOException {
         // load our test PDF
@@ -107,6 +109,7 @@ public class PDFRedactionTest {
     }
 
 
+    // test redaction in a 270 degree rotated pdf
     @Test
     public void testRedaction4() throws IOException {
         // load our test PDF
@@ -129,6 +132,27 @@ public class PDFRedactionTest {
         checkPDF(blackBOXPdf, 0, null, List.of("Zaglio"));
 
 //        writeBinary("test5.pdf", blackBOXPdf);
+    }
+
+    // test redaction inside an image based PDF
+    @Test
+    public void testRedaction5() throws IOException {
+        // load our test PDF
+        byte[] originalPDF = loadBinary("/image.pdf");
+        assertTrue(originalPDF.length > 0);
+
+        // black boxes document
+        PDDocument blackDocument = Loader.loadPDF(originalPDF);
+        // draw the red boxes, leave the text
+        PDFRedactor blackStripper = new PDFRedactor(blackDocument, true);
+        blackStripper.addRegion(0, 10.0f, 10.0f, 500.0f, 500.0f);
+        blackStripper.apply();
+        ByteArrayOutputStream blackBOS = new ByteArrayOutputStream();
+        blackDocument.save(blackBOS);
+        blackDocument.close();
+        byte[] blackBOXPdf = blackBOS.toByteArray();
+
+//        writeBinary("test6.pdf", blackBOXPdf);
     }
 
     /////////////////////////////////////////////////////////////////////
