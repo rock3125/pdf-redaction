@@ -232,7 +232,8 @@ public class PDFRedactor extends PDFContentStreamEditor {
         for (RectangleAndPage location : regions) {
             if (location.page != getCurrentPageNo() - 1) continue;
 
-            Rectangle2D rect = location.rectangle;
+            // make the rectangle slightly larger to account for rounding errors
+            Rectangle2D rect = grow(location.rectangle, 0.5, 0.5);
             // Check if character box intersects or is contained within the redaction box
             if (rect.intersects(text.getX(), text.getPageHeight() - text.getY(), text.getWidth(), text.getHeight())) {
                 return true;
@@ -242,6 +243,19 @@ public class PDFRedactor extends PDFContentStreamEditor {
             }
         }
         return false;
+    }
+
+    /**
+     * Expands a Rectangle2D by a specified amount in all directions.
+     * Useful for overcoming PDF coordinate "jitter" during redaction checks.
+     */
+    private Rectangle2D grow(Rectangle2D rect, double dx, double dy) {
+        return new Rectangle2D.Double(
+                rect.getX() - dx,
+                rect.getY() - dy,
+                rect.getWidth() + (2 * dx),
+                rect.getHeight() + (2 * dy)
+        );
     }
 
     /**
@@ -379,7 +393,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                         while (to < numberOfCharacters && !matchesImageRegion(texts.get(textIndex))) {
                             int characterCode = operatorText.get(textIndex).getCharacterCodes()[0];
                             byte[] charBytes = new byte[bytesPerCharacter];
-                            // Handle multi-byte character encoding
+                            // Handle multibyte character encoding
                             for (int i = 0; i < bytesPerCharacter; i++) {
                                 charBytes[bytesPerCharacter - 1 - i] = (byte) ((characterCode % 256) & 0xff);
                                 characterCode /= 256;
