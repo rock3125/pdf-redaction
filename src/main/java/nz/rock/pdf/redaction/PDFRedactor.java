@@ -139,12 +139,24 @@ public class PDFRedactor extends PDFContentStreamEditor {
 
                 int offset = pageText.indexOf(textLower);
                 while (offset >= 0) {
-                    // Boundary check: ensure we aren't redacting "farm" inside "farmer"
-                    char endCh = (offset + textLength < pageText.length()) ? pageText.charAt(offset + textLength) : ' ';
-                    boolean validEnd = !(endCh >= 'a' && endCh <= 'z' || endCh >= '0' && endCh <= '9');
 
-                    char startCh = (offset > 0) ? pageText.charAt(offset - 1) : ' ';
-                    boolean validStart = !(startCh >= 'a' && startCh <= 'z' || startCh >= '0' && startCh <= '9');
+                    // Boundary check: ensure we aren't redacting "farm" inside "farmer"
+
+                    // Check trailing character boundary
+                    boolean validEnd = true;
+                    if (offset + textLength < pageText.length()) {
+                        char endCh = pageText.charAt(offset + textLength);
+                        // If the next character is a letter or a digit, it's NOT a valid word end
+                        validEnd = !Character.isLetterOrDigit(endCh);
+                    }
+
+                    // Check leading character boundary
+                    boolean validStart = true;
+                    if (offset > 0 && offset < pageText.length()) {
+                        char startCh = pageText.charAt(offset - 1);
+                        // If the previous character is a letter or a digit, it's NOT a valid word start
+                        validStart = !Character.isLetterOrDigit(startCh);
+                    }
 
                     if (validStart && validEnd) {
                         int firstListIndex = stringIndexToTextPositionIndex.get(offset);
