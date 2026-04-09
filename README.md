@@ -47,15 +47,10 @@ The PDFRedactor utilizes a PDFTextGatherer to map every character's Unicode valu
 2. Stream Editing Phase
 
 The engine extends PDFContentStreamEditor to rewrite the page's content stream:
-
-    Text: As the PDF is being rewritten, the editor checks each character against the redaction regions. Matches are omitted from the new stream, and spacing is adjusted to prevent layout shifts.
-
-    Images: When an image (Do operator) is encountered, the engine calculates the intersection between the image's page-coordinates and the redaction regions. It then modifies the raw pixel data of the image before re-embedding it.
-
-    Vector/Forms: It calculates the bounding box of complex vector groups. If a group overlaps a redaction zone, the entire group is dropped to prevent data leakage.
+* Text: As the PDF is being rewritten, the editor checks each character against the redaction regions. Matches are omitted from the new stream, and spacing is adjusted to prevent layout shifts.
+* Images: When an image (Do operator) is encountered, the engine calculates the intersection between the image's page-coordinates and the redaction regions. It then modifies the raw pixel data of the image before re-embedding it.
+* Vector/Forms: It calculates the bounding box of complex vector groups. If a group overlaps a redaction zone, the entire group is dropped to prevent data leakage.
 
 ## Requirements
-
-    Java 17+ (Uses modern features like record and instanceof pattern matching).
-
-    Apache PDFBox 3.x.
+* Java 17+
+* Apache PDFBox 3.x.
