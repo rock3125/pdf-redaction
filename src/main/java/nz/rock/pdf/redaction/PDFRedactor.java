@@ -7,12 +7,17 @@ import org.apache.pdfbox.pdfwriter.ContentStreamWriter;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.util.Matrix;
 
 import java.awt.*;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -321,6 +326,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                     return;
 
                 } else {
+
                     if (OperatorName.SHOW_TEXT.equals(operator.getName())) {
                         // single string
                         patchShowTextOperation(contentStreamWriter, operatorText, operands);
@@ -350,18 +356,6 @@ public class PDFRedactor extends PDFContentStreamEditor {
                         return; // remove any other kind of text
                     }
                 }
-            }
-
-        } else if (OperatorName.DRAW_OBJECT.equals(operator.getName())) {
-
-            // is this image on the shit-list?
-            COSBase base0 = operands.get(0);
-            if (!(base0 instanceof COSName name)) {
-                return;
-            }
-            // if it is - just ignore it - don't draw it
-            if (intersectingImageNameList.contains(name)) {
-                return;
             }
         }
 
@@ -472,18 +466,70 @@ public class PDFRedactor extends PDFContentStreamEditor {
      * @param name the name of the image - draw it if we're allowed to (i.e. the image is not redacted)
      */
     public void drawImage(COSName name) {
-        // get the page transform
-        Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+        if (!redact) return; // Only modify images if we are actually redacting
 
-        float x = ctm.getTranslateX();
-        float y = ctm.getTranslateY();
+        try {
+            PDResources resources = getCurrentPage().getResources();
+            PDXObject xobject = resources.getXObject(name);
 
-        float scaleX = ctm.getScaleX();
-        float scaleY = ctm.getScaleY();
+            if (!(xobject instanceof PDImageXObject pdImage)) {
+                return;
+            }
 
-        Rectangle2D imageLocation = new Rectangle2D.Float(x, y, scaleX, scaleY);
-        if (matchesRegion(imageLocation)) {
-            intersectingImageNameList.add(name);
+            Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+            float x = ctm.getTranslateX();
+            float y = ctm.getTranslateY();
+            float scaleX = ctm.getScaleX();
+            float scaleY = ctm.getScaleY();
+
+            Rectangle2D imageLocation = new Rectangle2D.Float(x, y, scaleX, scaleY);
+            boolean imageModified = false;
+
+            BufferedImage awtImage = null;
+            Graphics2D g2d = null;
+
+            for (RectangleAndPage location : regions) {
+                if (location.page != getCurrentPageNo() - 1) continue;
+
+                Rectangle2D rect = location.rectangle();
+                if (rect == null) continue;
+
+                if (rect.intersects(imageLocation)) {
+                    if (awtImage == null) {
+                        // Extract the image only once if it intersects multiple regions
+                        awtImage = pdImage.getImage();
+                        g2d = awtImage.createGraphics();
+                        g2d.setColor(Color.BLACK);
+                    }
+
+                    // Calculate the exact overlapping area
+                    Rectangle2D intersection = imageLocation.createIntersection(rect);
+
+                    // Map PDF bounding coordinates to Image Pixel coordinates
+                    // PDF origin is Bottom-Left, but AWT Image origin is Top-Left (Y is inverted)
+                    double pixelScaleX = awtImage.getWidth() / imageLocation.getWidth();
+                    double pixelScaleY = awtImage.getHeight() / imageLocation.getHeight();
+
+                    int px = (int) Math.round((intersection.getX() - imageLocation.getX()) * pixelScaleX);
+                    int py = (int) Math.round((imageLocation.getMaxY() - intersection.getMaxY()) * pixelScaleY);
+                    int pw = (int) Math.round(intersection.getWidth() * pixelScaleX);
+                    int ph = (int) Math.round(intersection.getHeight() * pixelScaleY);
+
+                    // Draw the redaction box directly onto the image pixels
+                    g2d.fillRect(px, py, pw, ph);
+                    imageModified = true;
+                }
+            }
+
+            if (imageModified) {
+                g2d.dispose();
+                // Re-encode the image and replace it in the page's resources dictionary
+                PDImageXObject newImage = LosslessFactory.createFromImage(document, awtImage);
+                resources.put(name, newImage);
+            }
+
+        } catch (IOException e) {
+            System.err.println("Failed to redact image overlap: " + e.getMessage());
         }
     }
 

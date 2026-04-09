@@ -12,4 +12,8 @@ public class RectangleAndPage {
         this.isText = isText;
         this.rectangle = rectangle;
     }
+
+    public Rectangle2D rectangle() {
+        return rectangle;
+    }
 }
