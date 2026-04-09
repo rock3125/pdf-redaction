@@ -71,6 +71,10 @@ public class PDFRedactor extends PDFContentStreamEditor {
         setup();
     }
 
+    public boolean isRedact() {
+        return redact;
+    }
+
 
     /**
      * helper for constructors
