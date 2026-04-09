@@ -25,7 +25,7 @@ public class PDFRedactionTest {
         PDDocument redDocument = Loader.loadPDF(originalPDF);
         // draw the red boxes, leave the text
         PDFRedactor stripper = new PDFRedactor(redDocument, false);
-        stripper.addRegion(0, 10f, 10f, 100.0f, 100.0f);
+        stripper.addRegion(0, 10.0f, 10.0f, 575.0f, 150.0f);
         stripper.setTextRedactionList(Arrays.asList("earthworks", "roofing", "farm", "external"));
         stripper.apply();
         ByteArrayOutputStream redBOS = new ByteArrayOutputStream();
@@ -54,7 +54,7 @@ public class PDFRedactionTest {
                 Arrays.asList("earthworks", "roofing", "farm"));
 
 //        writeBinary("test1.pdf", redBoxPDF);
-//        writeBinary("test2.pdf", blackBOXPdf);
+        writeBinary("test2.pdf", blackBOXPdf);
     }
 
     // test redaction in a 90 degree rotated pdf

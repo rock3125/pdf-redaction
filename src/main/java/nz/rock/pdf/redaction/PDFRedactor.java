@@ -483,7 +483,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                                          PageData pageData) throws IOException {
         if (getCurrentPageNo() - 1 != location.page) return false;
 
-        Rectangle2D region = location.rectangle.getBounds2D(); // transform(location.rectangle, pageData);
+        Rectangle2D region = location.rectangle.getBounds2D();
         pageContentStream.addRect((float)region.getX(), (float)region.getY(), (float)region.getWidth(), (float)region.getHeight());
         return true;
     }
