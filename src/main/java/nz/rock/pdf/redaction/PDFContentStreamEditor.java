@@ -56,6 +56,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
         }
     }
 
+    // start processing a new page
     @Override
     public void processPage(PDPage page) throws IOException {
         // Create a new stream that will eventually replace the existing page content
@@ -65,6 +66,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
 
             // Start the standard PDFBox parsing process
             super.processPage(page);
+
         } finally {
             replacement = null;
         }
@@ -73,6 +75,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
         page.setContents(stream);
     }
 
+    // forms need "opening up" to see what's inside them - recursive processing
     @Override
     public void showForm(PDFormXObject form) throws IOException {
         // Increment depth so we know we are inside a nested XObject
@@ -84,9 +87,9 @@ public class PDFContentStreamEditor extends PDFTextStripper {
 
     /**
      * Determines if a Form XObject (vector group) should be removed based on its location.
+     * Fixed matrix concatenation and coordinate mapping.
      */
     private boolean shouldDropForm(PDFormXObject form) {
-        // Ensure the current instance is a redactor and redaction is enabled
         if (!(this instanceof PDFRedactor redactor) || !redactor.isRedact()) {
             return false;
         }
@@ -95,16 +98,19 @@ public class PDFContentStreamEditor extends PDFTextStripper {
             PDRectangle bbox = form.getBBox();
             if (bbox == null) return false;
 
-            // Get the CTM (Current Transformation Matrix) to understand where the form sits on the page
-            Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
-            Matrix formMatrix = form.getMatrix();
+            // Start with the Current Transformation Matrix (CTM) from the graphics state
+            Matrix ctm = getGraphicsState().getCurrentTransformationMatrix().clone();
 
-            // If the form has its own internal transformation, combine it with the page CTM
+            // Combine with the Form's internal Matrix.
+            // In PDFBox, to get the correct global position, the form's matrix
+            // is applied BEFORE the CTM.
+            Matrix formMatrix = form.getMatrix();
             if (formMatrix != null) {
-                ctm = formMatrix.multiply(ctm);
+                ctm.concatenate(formMatrix);
             }
 
-            // Define the bounding box path in the form's local coordinate space
+            // Transform the bounding box using the combined matrix
+            // We use the matrix to transform the corners of the local BBox into Page Space
             GeneralPath path = new GeneralPath();
             path.moveTo(bbox.getLowerLeftX(), bbox.getLowerLeftY());
             path.lineTo(bbox.getUpperRightX(), bbox.getLowerLeftY());
@@ -112,15 +118,30 @@ public class PDFContentStreamEditor extends PDFTextStripper {
             path.lineTo(bbox.getLowerLeftX(), bbox.getUpperRightY());
             path.closePath();
 
-            // Transform the local coordinates into global page coordinates (usually points/pixels)
+            // Transform the local coordinates into global page coordinates
             java.awt.Shape globalShape = ctm.createAffineTransform().createTransformedShape(path);
             Rectangle2D globalBounds = globalShape.getBounds2D();
+            PDRectangle cropBox = getCurrentPage().getCropBox();
+            float pageHeight = cropBox.getHeight();
 
-            // Check if this area overlaps with any user-defined redaction zones
-            return redactor.matchesRegion(globalBounds);
+            // Your regions are stored using a 'flipped' Y (top-down).
+            // The globalBounds.getY() currently represents the distance from the BOTTOM.
+            // We must convert globalBounds to match your redactor's TOP-DOWN storage.
 
-        } catch (Exception e) {
-            System.err.println("Error calculating form bounding box: " + e.getMessage());
+            double normalizedY = pageHeight - (globalBounds.getY() + globalBounds.getHeight());
+
+            Rectangle2D normalizedBounds = new Rectangle2D.Double(
+                    globalBounds.getX() - cropBox.getLowerLeftX(),
+                    normalizedY - cropBox.getLowerLeftY(),
+                    globalBounds.getWidth(),
+                    globalBounds.getHeight()
+            );
+
+            // Now check if this normalized area overlaps with user-defined zones
+            return redactor.matchesImageRegion(normalizedBounds);
+
+        } catch (Exception ex) {
+            // exception - failed - keep the form
             return false;
         }
     }
@@ -134,21 +155,31 @@ public class PDFContentStreamEditor extends PDFTextStripper {
             if (resources != null) {
                 PDXObject xobject = resources.getXObject(name);
                 if (xobject instanceof PDFormXObject pdForm) {
-                    // If the entire vector group is inside a redaction zone, drop the 'Do' command entirely
-                    if (shouldDropForm(pdForm)) {
-                        System.out.println("Dropped vector form container: " + name.getName());
-                        return; // Exit early: this operator is NOT written to the new stream
+                    PDRectangle bbox = pdForm.getBBox();
+
+                    // Check if the form is "huge" (roughly the size of the page)
+                    boolean isFullPageForm = bbox.getWidth() >= (getCurrentPage().getCropBox().getWidth() * 0.9f);
+
+                    if (isFullPageForm) {
+                        // DO NOT DROP. Instead, step inside and redact the individual
+                        // operators (text/images) inside this form.
+                        showForm(pdForm);
+
+                    } else {
+                        // If it's a small specific vector group, we can safely drop it
+                        if (shouldDropForm(pdForm)) {
+                            return;
+                        }
+                        showForm(pdForm);
                     }
 
-                    // If not dropped, we descend into the form to check individual elements inside it
-                    showForm(pdForm);
-                }
-                else if (xobject instanceof PDImageXObject) {
+                } else if (xobject instanceof PDImageXObject) {
                     // If it's a raster image, delegate to the redactor to mask the pixel data
                     if (this instanceof PDFRedactor redactor) {
                         redactor.drawImage(name);
                     }
                 }
+
             }
         }
 

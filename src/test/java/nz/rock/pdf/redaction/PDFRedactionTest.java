@@ -54,7 +54,7 @@ public class PDFRedactionTest {
                 Arrays.asList("earthworks", "roofing", "farm"));
 
 //        writeBinary("test1.pdf", redBoxPDF);
-        writeBinary("test2.pdf", blackBOXPdf);
+//        writeBinary("test2.pdf", blackBOXPdf);
     }
 
     // test redaction in a 90 degree rotated pdf

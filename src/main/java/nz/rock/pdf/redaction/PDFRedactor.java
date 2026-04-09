@@ -8,6 +8,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
@@ -16,6 +17,7 @@ import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.util.Matrix;
 
 import java.awt.*;
+import java.awt.geom.GeneralPath;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -62,6 +64,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
         setup();
     }
 
+    // are we in full redact mode, or just drawing outline boxes?
     public boolean isRedact() {
         return redact;
     }
@@ -171,12 +174,27 @@ public class PDFRedactor extends PDFContentStreamEditor {
     /**
      * Manually defines a rectangular region on a specific page for redaction.
      */
+    /**
+     * Manually defines a rectangular region on a specific page for redaction.
+     * Fixed to account for CropBox offsets and standard PDF coordinate flipping.
+     */
     public void addRegion(int page, float x, float y, float w, float h) {
         PDPage pdPage = document.getPage(page);
-        float pageHeight = pdPage.getMediaBox().getHeight();
-        // Flip Y-coordinate: PDFBox uses bottom-up (0,0 is bottom left)
-        float bottomY = pageHeight - y - h;
-        regions.add(new RectangleAndPage(page, false, new Rectangle2D.Float(x, bottomY, w, h)));
+        if (pdPage == null) return;
+
+        // Use CropBox instead of MediaBox, as it represents the actual visible area
+        PDRectangle cropBox = pdPage.getCropBox();
+        float boxHeight = cropBox.getHeight();
+        float boxXOffset = cropBox.getLowerLeftX();
+        float boxYOffset = cropBox.getLowerLeftY();
+
+        // PDFBox Y-axis is bottom-to-top.
+        // We subtract the user's Y and Height from the total box height,
+        // then add the box's own Y offset (in case the page doesn't start at 0).
+        float flippedY = (boxHeight - y - h) + boxYOffset;
+        float adjustedX = x + boxXOffset;
+
+        regions.add(new RectangleAndPage(page, false, new Rectangle2D.Float(adjustedX, flippedY, w, h)));
     }
 
     public void setTextRedactionList(List<String> textList) {
@@ -186,7 +204,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
     /**
      * Checks if a specific character's position overlaps with any redaction regions.
      */
-    protected boolean matchesRegion(TextPosition text) {
+    protected boolean matchesImageRegion(TextPosition text) {
         if (!redact) return false;
 
         for (RectangleAndPage location : regions) {
@@ -207,11 +225,14 @@ public class PDFRedactor extends PDFContentStreamEditor {
     /**
      * Checks if a bounding box (usually for an image) overlaps with redaction regions.
      */
-    protected boolean matchesRegion(Rectangle2D box) {
+    protected boolean matchesImageRegion(Rectangle2D box) {
         for (RectangleAndPage location : regions) {
+            // check this is the right page - if not => skip
             if (location.page != getCurrentPageNo() - 1) continue;
+            if (location.isText) continue; // text?  we only do image here
+            if (location.rectangle == null) continue;
 
-            Rectangle2D rect = location.rectangle;
+            Rectangle2D rect = location.rectangle.getBounds2D();
             if (rect.intersects(box.getX(), box.getY(), box.getWidth(), box.getHeight()) && !box.contains(rect)) {
                 return true;
             }
@@ -244,7 +265,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
             boolean operatorHasTextToBeKept = false;
 
             for (TextPosition text : operatorText) {
-                boolean textToBeRemoved = matchesRegion(text);
+                boolean textToBeRemoved = matchesImageRegion(text);
                 operatorHasTextToBeRemoved |= textToBeRemoved;
                 operatorHasTextToBeKept |= !textToBeRemoved;
             }
@@ -318,7 +339,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                 while (from < numberOfCharacters) {
                     TextPosition text = texts.get(textIndex);
 
-                    if (matchesRegion(text)) {
+                    if (matchesImageRegion(text)) {
                         // Character is redacted: effectively replace its width with a gap (offset)
                         int characterCode = operatorText.get(textIndex).getCharacterCodes()[0];
                         offset -= font.getWidth(characterCode);
@@ -333,7 +354,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
 
                         ByteArrayOutputStream textRange = new ByteArrayOutputStream();
                         int to = from;
-                        while (to < numberOfCharacters && !matchesRegion(texts.get(textIndex))) {
+                        while (to < numberOfCharacters && !matchesImageRegion(texts.get(textIndex))) {
                             int characterCode = operatorText.get(textIndex).getCharacterCodes()[0];
                             byte[] charBytes = new byte[bytesPerCharacter];
                             // Handle multi-byte character encoding
@@ -431,6 +452,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                 PDImageXObject newImage = LosslessFactory.createFromImage(document, awtImage);
                 resources.put(name, newImage);
             }
+
         } catch (Exception e) {
             System.err.println("Failed to redact image overlap: " + e.getMessage());
         }
@@ -461,7 +483,7 @@ public class PDFRedactor extends PDFContentStreamEditor {
                                          PageData pageData) throws IOException {
         if (getCurrentPageNo() - 1 != location.page) return false;
 
-        Rectangle2D region = transform(location.rectangle, pageData);
+        Rectangle2D region = location.rectangle.getBounds2D(); // transform(location.rectangle, pageData);
         pageContentStream.addRect((float)region.getX(), (float)region.getY(), (float)region.getWidth(), (float)region.getHeight());
         return true;
     }
