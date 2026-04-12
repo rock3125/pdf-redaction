@@ -28,6 +28,8 @@ import org.apache.pdfbox.text.TextPosition;
 import org.apache.pdfbox.util.Matrix;
 
 import java.awt.*;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.GeneralPath;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -495,14 +497,67 @@ public class PDFRedactor extends PDFContentStreamEditor {
      */
     private boolean checkPageAndDrawRect(
             PDPageContentStream pageContentStream,
-            RectangleAndPage location
+            RectangleAndPage location,
+            PDPage page
     ) throws IOException {
         if (getCurrentPageNo() - 1 != location.page) return false;
-
-        Rectangle2D region = location.rectangle.getBounds2D();
-        pageContentStream.addRect((float)region.getX(), (float)region.getY(), (float)region.getWidth(), (float)region.getHeight());
+        Rectangle2D rect = transformRect(location.rectangle.getBounds2D(), page);
+        pageContentStream.addRect(
+                (float) rect.getX(),
+                (float) rect.getY(),
+                (float) rect.getWidth(),
+                (float) rect.getHeight()
+        );
         return true;
     }
+
+    /**
+     * helper - transform a rectangle to a page oriented rectangle
+     * @param region the rectangle to transform
+     * @param page the PDF page to transform it for
+     * @return the transformed rectangle
+     */
+    public static Rectangle2D transformRect(Rectangle2D region, PDPage page) {
+        // Get the page matrix — this encodes /Rotate and any other page-level transforms
+        Matrix ctm = page.getMatrix();
+        int rotation = page.getRotation();
+        PDRectangle mediaBox = page.getMediaBox();
+
+        GeneralPath path = new GeneralPath();
+        double x = region.getX();
+        double y = region.getY();
+        double w = region.getWidth();
+        double h = region.getHeight();
+
+        if (rotation == 90) {
+            double oldX = x;
+            x = mediaBox.getHeight() - region.getY() - h;
+            y = oldX;
+            double oldH = h;
+            h = w;
+            w = oldH;
+        } else if (rotation == 270) {
+            double oldX = x;
+            x = mediaBox.getUpperRightX() - (region.getY());
+            y = oldX + region.getWidth();
+            double oldH = h;
+            h = w;
+            w = oldH;
+        } else if (rotation == 180) {
+            x = mediaBox.getWidth()  - region.getX() - w;
+            y = mediaBox.getHeight() - region.getY() - h;
+        }
+
+        path.moveTo(x, y);
+        path.lineTo(x + w, y);
+        path.lineTo(x + w, y + h);
+        path.lineTo(x, y + h);
+        path.closePath();
+
+        Shape transformed = ctm.createAffineTransform().createTransformedShape(path);
+        return transformed.getBounds2D();
+    }
+
 
     /**
      * After processing the content stream, this method appends the visual
@@ -517,14 +572,14 @@ public class PDFRedactor extends PDFContentStreamEditor {
             if (redact) {
                 pageContentStream.setNonStrokingColor(Color.BLACK);
                 for (RectangleAndPage location : regions) {
-                    if (checkPageAndDrawRect(pageContentStream, location)) {
+                    if (checkPageAndDrawRect(pageContentStream, location, page)) {
                         pageContentStream.fill();
                     }
                 }
             } else {
                 pageContentStream.setStrokingColor(Color.RED);
                 for (RectangleAndPage location : regions) {
-                    if (checkPageAndDrawRect(pageContentStream, location)) {
+                    if (checkPageAndDrawRect(pageContentStream, location, page)) {
                         pageContentStream.stroke();
                     }
                 }

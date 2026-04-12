@@ -91,7 +91,7 @@ public class PDFRedactionTest {
 
         checkPDF(blackBOXPdf, 0, null, List.of("Engineering"));
 
-//        writeBinary("test3.pdf", blackBOXPdf);
+        writeBinary("test3.pdf", blackBOXPdf);
     }
 
 
