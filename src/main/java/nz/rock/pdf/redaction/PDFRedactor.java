@@ -195,9 +195,6 @@ public class PDFRedactor extends PDFContentStreamEditor {
 
     /**
      * Manually defines a rectangular region on a specific page for redaction.
-     */
-    /**
-     * Manually defines a rectangular region on a specific page for redaction.
      * Fixed to account for CropBox offsets and standard PDF coordinate flipping.
      */
     public void addRegion(int page, float x, float y, float w, float h) {
@@ -309,21 +306,20 @@ public class PDFRedactor extends PDFContentStreamEditor {
             if (operatorHasTextToBeRemoved) {
                 if (!operatorHasTextToBeKept) {
                     return; // The entire string is redacted; drop the operator entirely
-                } else {
+
                     // Partial redaction: rewrite the operator to only include safe characters
-                    if (OperatorName.SHOW_TEXT.equals(operator.getName())) {
-                        patchShowTextOperation(contentStreamWriter, operatorText, operands);
-                        return;
-                    } else if (OperatorName.SHOW_TEXT_ADJUSTED.equals(operator.getName())) {
-                        patchShowTextAdjustedOperation(contentStreamWriter, operatorText, operands);
-                        return;
-                    } else if (OperatorName.SHOW_TEXT_LINE.equals(operator.getName())) {
-                        super.write(contentStreamWriter, Operator.getOperator(OperatorName.NEXT_LINE), new ArrayList<>());
-                        patchShowTextOperation(contentStreamWriter, operatorText, operands);
-                        return;
-                    } else {
-                        return;
-                    }
+                } else if (OperatorName.SHOW_TEXT.equals(operator.getName())) {
+                    patchShowTextOperation(contentStreamWriter, operatorText, operands);
+                    return;
+                } else if (OperatorName.SHOW_TEXT_ADJUSTED.equals(operator.getName())) {
+                    patchShowTextAdjustedOperation(contentStreamWriter, operatorText, operands);
+                    return;
+                } else if (OperatorName.SHOW_TEXT_LINE.equals(operator.getName())) {
+                    super.write(contentStreamWriter, Operator.getOperator(OperatorName.NEXT_LINE), new ArrayList<>());
+                    patchShowTextOperation(contentStreamWriter, operatorText, operands);
+                    return;
+                } else {
+                    return;
                 }
             }
         }
@@ -495,36 +491,18 @@ public class PDFRedactor extends PDFContentStreamEditor {
     }
 
     /**
-     * Handles coordinate transformations for rotated PDF pages.
-     */
-    private Rectangle2D transform(Rectangle2D rect, PageData pageData) {
-        float bottom = pageData.height - (float)(rect.getY() + rect.getHeight());
-        float left = (float)rect.getX();
-        float w = (float)rect.getWidth();
-        float h = (float)rect.getHeight();
-
-        return switch (pageData.rotate) {
-            case 90 -> new Rectangle2D.Float(bottom, left, h, w);
-            case 180 -> new Rectangle2D.Float(pageData.width - left - w, bottom, w, h);
-            case 270 -> new Rectangle2D.Float(pageData.width - bottom, pageData.height - left, -h, -w);
-            default -> new Rectangle2D.Float(left, bottom, w, h);
-        };
-    }
-
-    /**
      * Draws a rectangle into the page content stream (visual redaction).
      */
-    private boolean checkPageAndDrawRect(PDPageContentStream pageContentStream,
-                                         RectangleAndPage location,
-                                         PageData pageData) throws IOException {
+    private boolean checkPageAndDrawRect(
+            PDPageContentStream pageContentStream,
+            RectangleAndPage location
+    ) throws IOException {
         if (getCurrentPageNo() - 1 != location.page) return false;
 
         Rectangle2D region = location.rectangle.getBounds2D();
         pageContentStream.addRect((float)region.getX(), (float)region.getY(), (float)region.getWidth(), (float)region.getHeight());
         return true;
     }
-
-    private record PageData(int rotate, float width, float height) {}
 
     /**
      * After processing the content stream, this method appends the visual
@@ -534,24 +512,19 @@ public class PDFRedactor extends PDFContentStreamEditor {
     public void processPage(PDPage page) throws IOException {
         super.processPage(page);
 
-        PageData pageData = new PageData(
-                page.getCOSObject().getInt(COSName.ROTATE),
-                page.getMediaBox().getWidth(), page.getMediaBox().getHeight()
-        );
-
         // Open a new stream in APPEND mode to draw the redaction overlays
         try (PDPageContentStream pageContentStream = new PDPageContentStream(this.document, page, PDPageContentStream.AppendMode.APPEND, true)) {
             if (redact) {
                 pageContentStream.setNonStrokingColor(Color.BLACK);
                 for (RectangleAndPage location : regions) {
-                    if (checkPageAndDrawRect(pageContentStream, location, pageData)) {
+                    if (checkPageAndDrawRect(pageContentStream, location)) {
                         pageContentStream.fill();
                     }
                 }
             } else {
                 pageContentStream.setStrokingColor(Color.RED);
                 for (RectangleAndPage location : regions) {
-                    if (checkPageAndDrawRect(pageContentStream, location, pageData)) {
+                    if (checkPageAndDrawRect(pageContentStream, location)) {
                         pageContentStream.stroke();
                     }
                 }

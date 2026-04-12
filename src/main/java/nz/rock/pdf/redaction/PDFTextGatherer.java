@@ -33,7 +33,7 @@ public class PDFTextGatherer extends PDFContentStreamEditor {
     private final HashMap<Integer, List<TextPosition>> textByPage = new HashMap<>();
 
 
-    public PDFTextGatherer(PDDocument document) throws IOException {
+    public PDFTextGatherer(PDDocument document) {
         super(document);
         this.document = document;
     }

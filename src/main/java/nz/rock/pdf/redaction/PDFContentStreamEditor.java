@@ -186,8 +186,8 @@ public class PDFContentStreamEditor extends PDFTextStripper {
         if ("Do".equals(operator.getName()) && !operands.isEmpty() && operands.get(0) instanceof COSName name) {
             PDResources resources = getResources();
             if (resources != null) {
-                PDXObject xobject = resources.getXObject(name);
-                if (xobject instanceof PDFormXObject pdForm) {
+                PDXObject xObject = resources.getXObject(name);
+                if (xObject instanceof PDFormXObject pdForm) {
                     PDRectangle bbox = pdForm.getBBox();
 
                     // Check if the form is "huge" (roughly the size of the page)
@@ -205,7 +205,7 @@ public class PDFContentStreamEditor extends PDFTextStripper {
                         showForm(pdForm);
                     }
 
-                } else if (xobject instanceof PDImageXObject) {
+                } else if (xObject instanceof PDImageXObject) {
                     // If it's a raster image, delegate to the redactor to mask the pixel data
                     if (this instanceof PDFRedactor redactor) {
                         redactor.drawImage(name);
