@@ -9,7 +9,7 @@
  *
  */
 
-package nz.rock.pdf.redaction;
+package nz.co.rock.pdfredactor;
 
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -32,16 +32,18 @@ public class ImagePixelAnalyzer {
 
     // Keep track of processed images to avoid double-counting shared resources
     private final Set<String> processedImages = new HashSet<>();
-    private long totalBlackPixels = 0;
+    private long colourToLookFor = 0;
+    private long totalColourPixels = 0;
 
-    public long countAllBlackPixels(PDDocument document) throws IOException {
-        totalBlackPixels = 0;
+    public long countPixels(PDDocument document, long colour) throws IOException {
+        colourToLookFor = colour;
+        totalColourPixels = 0;
         processedImages.clear();
 
         for (PDPage page : document.getPages()) {
             processResources(page.getResources());
         }
-        return totalBlackPixels;
+        return totalColourPixels;
     }
 
     private void processResources(PDResources resources) throws IOException {
@@ -75,9 +77,8 @@ public class ImagePixelAnalyzer {
                 int rgb = bitmap.getRGB(x, y);
 
                 // Mask out alpha and check if R, G, and B are all 0
-                // (rgb & 0x00FFFFFF) == 0 is true only for pure black
-                if ((rgb & 0x00FFFFFF) == 0) {
-                    totalBlackPixels++;
+                if ((rgb & 0x00FFFFFF) == colourToLookFor) {
+                    totalColourPixels++;
                 }
             }
         }

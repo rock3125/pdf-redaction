@@ -21,16 +21,12 @@ PDDocument document = Loader.loadPDF(new File("input.pdf"));
 // 1. Instantiate the redactor
 // Parameters: (PDDocument, boolean redact)
 // Use 'true' to permanently redact, 'false' for red-outline preview mode
-PDFRedactor r = new PDFRedactor(document, true);
-
-// 2. Add manual redaction regions (pageIndex, x, y, width, height)
-r.addRegion(0, 100f, 100f, 200.0f, 200.0f);
-
-// 3. Set a list of keywords to automatically redact across the entire PDF
-r.setTextRedactionList(Arrays.asList("earthworks", "roofing", "farm", "external"));
-
-// 4. Run the redaction engine
-r.apply();
+PDFRedactor r = new PDFRedactor();
+r.redact(
+        document, 
+        Arrays.asList("confidential", "SECRET_WORD"), 
+        Collections.singletonList(new RectangleOnPage(1, 10, 10, 100, 100))
+        );
 
 // 5. Save the sanitized result
 document.save(new File("output_redacted.pdf"));
@@ -52,5 +48,5 @@ The engine extends PDFContentStreamEditor to rewrite the page's content stream:
 * Vector/Forms: It calculates the bounding box of complex vector groups. If a group overlaps a redaction zone, the entire group is dropped to prevent data leakage.
 
 ## Requirements
-* Java 17+
+* Java 21+
 * Apache PDFBox 3.x.
