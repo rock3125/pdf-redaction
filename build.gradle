@@ -2,8 +2,10 @@ plugins {
     id 'java-library'
 }
 
+// build the JAR:  ./gradlew jar
+
 group = 'co.nz.rock.pdfredactor'
-version = '1.0.0-SNAPSHOT'
+version = '1.0.0'
 
 repositories {
     mavenCentral()
