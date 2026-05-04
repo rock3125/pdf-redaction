@@ -35,10 +35,10 @@ document.close();
 
 ## Build the JAR
 ```
-./gradlew jar
+gradle jar
 # output: ./build/libs/pdfredactor-1.0.0.jar
 ```
 
 ## Requirements
-* Java 21+
+* Java 17+
 * Apache PDFBox 3.x.
