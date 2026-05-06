@@ -9,7 +9,7 @@
  *
  */
 
-package nz.co.rock.pdfredactor;
+package nz.co.rock3125.pdfredactor;
 
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;

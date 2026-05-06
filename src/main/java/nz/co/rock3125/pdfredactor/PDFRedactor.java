@@ -9,7 +9,7 @@
  *
  */
 
-package nz.co.rock.pdfredactor;
+package nz.co.rock3125.pdfredactor;
 
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;

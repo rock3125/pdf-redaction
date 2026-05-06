@@ -9,7 +9,7 @@
  *
  */
 
-package nz.co.rock.pdfredactor;
+package nz.co.rock3125.pdfredactor;
 
 /**
  * Represents a specific area on a specific page to be redacted.
