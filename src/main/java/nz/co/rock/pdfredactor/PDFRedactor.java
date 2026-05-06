@@ -58,6 +58,7 @@ public class PDFRedactor {
         for (int i = 0; i < numPages; i++) {
             int pageNum = i + 1;
             PDPage page = document.getPage(i);
+            if (page == null) continue;
 
             List<Rectangle2D> pageRedactionBoxes = new ArrayList<>();
 
@@ -79,6 +80,7 @@ public class PDFRedactor {
                 pageRedactionBoxes.addAll(textStripper.getFoundBoundingBoxes());
             }
 
+            // nothing to redact?
             if (pageRedactionBoxes.isEmpty()) {
                 continue;
             }
