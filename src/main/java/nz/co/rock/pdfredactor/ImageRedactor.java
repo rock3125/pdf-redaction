@@ -1,3 +1,14 @@
+/*
+ * Copyright (c) 2026 by Rock de Vocht
+ *
+ * All rights reserved. No part of this publication may be reproduced, distributed, or
+ * transmitted in any form or by any means, including photocopying, recording, or other
+ * electronic or mechanical methods, without the prior written permission of the publisher,
+ * except in the case of brief quotations embodied in critical reviews and certain other
+ * noncommercial uses permitted by copyright law.
+ *
+ */
+
 package nz.co.rock.pdfredactor;
 
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
@@ -27,16 +38,29 @@ class ImageRedactor extends PDFGraphicsStreamEngine {
     private final PDPage page;
     private final PDDocument document; // Added document reference
 
+    // constructor
     protected ImageRedactor(PDDocument document, PDPage page, List<Rectangle2D> redactionBoxes) {
         super(page);
+        assert( document != null && page != null && redactionBoxes != null);
         this.page = page;
         this.redactionBoxes = redactionBoxes;
         this.document = document;
     }
 
+    /**
+     * Renders a given image onto a PDF page while applying redaction based on specified bounding boxes.
+     * If any portion of the image intersects with the predefined redaction areas, those portions
+     * are redacted by overlaying black rectangles on the image raster. The redacted image is then
+     * re-embedded into the PDF page resources.
+     *
+     * @param image the {@link PDImage} object containing the image to be rendered on the PDF page
+     * @throws IOException if an error occurs during image processing or modification
+     */
     @Override
     public void drawImage(PDImage image) throws IOException {
+        if (image == null || redactionBoxes == null) return;
         Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+        if (ctm == null) return;
 
         // Calculate image bounding box on the page
         float x = ctm.getTranslateX();
@@ -107,4 +131,5 @@ class ImageRedactor extends PDFGraphicsStreamEngine {
     @Override public void fillPath(int windingRule) {}
     @Override public void fillAndStrokePath(int windingRule) {}
     @Override public void shadingFill(COSName shadingName) {}
+
 }

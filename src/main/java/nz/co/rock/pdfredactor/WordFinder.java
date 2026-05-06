@@ -1,3 +1,14 @@
+/*
+ * Copyright (c) 2026 by Rock de Vocht
+ *
+ * All rights reserved. No part of this publication may be reproduced, distributed, or
+ * transmitted in any form or by any means, including photocopying, recording, or other
+ * electronic or mechanical methods, without the prior written permission of the publisher,
+ * except in the case of brief quotations embodied in critical reviews and certain other
+ * noncommercial uses permitted by copyright law.
+ *
+ */
+
 package nz.co.rock.pdfredactor;
 
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -17,7 +28,8 @@ class WordFinder extends PDFTextStripper {
     private final List<Pattern> targetPatterns = new ArrayList<>();
     private final List<Rectangle2D> foundBoundingBoxes = new ArrayList<>();
 
-    public WordFinder(List<String> targetWords) throws IOException {
+    // constructor
+    public WordFinder(List<String> targetWords) {
         super();
         setSortByPosition(true); // Mandatory for rotated pages
 
@@ -29,8 +41,22 @@ class WordFinder extends PDFTextStripper {
         }
     }
 
+
+    /**
+     * Overrides the base implementation to process text and identify bounding boxes for specific patterns.
+     * Scans the provided text for target patterns and calculates the bounding boxes corresponding
+     * to the matched portions on the page.
+     *
+     * @param text the text string being written, potentially containing target patterns
+     * @param textPositions the list of {@link TextPosition} objects corresponding to the characters
+     *                      in the text, used for determining the coordinates and dimensions
+     *                      of the matches
+     * @throws IOException if an error occurs during processing
+     */
     @Override
     protected void writeString(String text, List<TextPosition> textPositions) throws IOException {
+        if (text == null || textPositions == null) return;
+
         for (Pattern pattern : targetPatterns) {
             Matcher matcher = pattern.matcher(text);
 
@@ -57,4 +83,5 @@ class WordFinder extends PDFTextStripper {
     public List<Rectangle2D> getFoundBoundingBoxes() {
         return foundBoundingBoxes;
     }
+
 }

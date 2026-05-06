@@ -46,6 +46,16 @@ public class ImagePixelAnalyzer {
         return totalColourPixels;
     }
 
+    /**
+     * Processes the resources of a PDF document to identify and analyze embedded images or nested form
+     * XObjects. The method ensures that each image is processed only once by maintaining a set of
+     * already-processed images. If an image is encountered, it is analyzed for pixel data, and if a
+     * form XObject is encountered, its resources are recursively processed.
+     *
+     * @param resources The {@link PDResources} object containing the resources of a PDF page or form XObject.
+     *                  It may include images, forms, or other objects.
+     * @throws IOException If an error occurs while accessing or processing the resources.
+     */
     private void processResources(PDResources resources) throws IOException {
         if (resources == null) return;
 
@@ -66,6 +76,14 @@ public class ImagePixelAnalyzer {
         }
     }
 
+    /**
+     * Counts the number of pixels in the given image that match a specified color.
+     * The method processes the image pixel by pixel, comparing the RGB components
+     * (ignoring alpha) of each pixel to the target color.
+     *
+     * @param pdImage The {@link PDImageXObject} representing the image to be analyzed.
+     * @throws IOException If an error occurs while extracting or processing the image data.
+     */
     private void countPixelsInImage(PDImageXObject pdImage) throws IOException {
         // Convert to a standard RGB bitmap to handle different color spaces consistently
         BufferedImage bitmap = pdImage.getImage();

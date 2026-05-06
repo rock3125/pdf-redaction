@@ -1,3 +1,14 @@
+/*
+ * Copyright (c) 2026 by Rock de Vocht
+ *
+ * All rights reserved. No part of this publication may be reproduced, distributed, or
+ * transmitted in any form or by any means, including photocopying, recording, or other
+ * electronic or mechanical methods, without the prior written permission of the publisher,
+ * except in the case of brief quotations embodied in critical reviews and certain other
+ * noncommercial uses permitted by copyright law.
+ *
+ */
+
 package nz.co.rock.pdfredactor;
 
 import org.apache.pdfbox.cos.COSArray;
@@ -20,11 +31,28 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A professional utility to redact text, coordinates, and overlapping images from a PDF document.
+ * A utility to redact text, coordinates, and overlapping images inside a PDF document.
  */
 public class PDFRedactor {
 
+    /**
+     * Redacts specified words and/or rectangular areas from a PDF document by removing or masking
+     * text and images within the specified regions across all pages.
+     *
+     * @param document The PDF document to be redacted.
+     * @param words A list of words to be redacted from the document. Can be null or empty if
+     *              only specific areas are being redacted.
+     * @param areas A list of rectangular areas, each specifying a page and coordinates, to
+     *              be redacted. Can be null or empty if only word-based redactions are
+     *              performed. Each rectangle should correspond to a specific 1-based page number.
+     * @throws IOException If an error occurs while processing the PDF document.
+     */
     public void redact(PDDocument document, List<String> words, List<RectangleOnPage> areas) throws IOException {
+        // null? - just ignore it
+        if (document == null) return;
+        // nothing to redact?
+        if (words == null && areas == null) return;
+
         int numPages = document.getNumberOfPages();
 
         for (int i = 0; i < numPages; i++) {
@@ -150,8 +178,30 @@ public class PDFRedactor {
         page.setContents(newContents);
     }
 
-    private void processCOSString(COSString cosString, PDFont font, List<TokenRef> activeTokens, StringBuilder blockText) {
-        if (font == null) return;
+
+    /**
+     * Processes a COSString object by decoding its contents using the provided font,
+     * appending the decoded text to the provided StringBuilder, and creating a
+     * mapping between the COSString and its decoded text. The mapping is stored in
+     * a list of TokenRef objects for further processing.
+     *
+     * @param cosString The COSString object to be processed. Represents the original
+     *                  tokenized content from the PDF document.
+     * @param font The PDFont object used to decode the COSString. Must not be null.
+     * @param activeTokens A list of TokenRef objects that will be updated with a
+     *                     reference to the decoded content of the COSString.
+     * @param blockText A StringBuilder that accumulates the decoded text content of
+     *                  all processed COSStrings for the current context.
+     */
+    private void processCOSString(
+            COSString cosString,
+            PDFont font,
+            List<TokenRef> activeTokens,
+            StringBuilder blockText
+    ) {
+        // check for nulls
+        if (font == null || cosString == null || activeTokens == null || blockText == null) return;
+
         try {
             // FIX: Read character codes sequentially using an InputStream
             InputStream in = new ByteArrayInputStream(cosString.getBytes());
@@ -182,7 +232,27 @@ public class PDFRedactor {
         }
     }
 
-    private void processTextSequence(List<TokenRef> activeTokens, StringBuilder blockText, List<String> wordsToScrub) {
+    /**
+     * Processes a text sequence by identifying and scrubbing specified words from a block of text
+     * and updating corresponding token references to reflect these changes.
+     *
+     * @param activeTokens A list of TokenRef objects representing the origin stream tokens for
+     *                     chunks of text. These tokens are analyzed and updated to remove portions
+     *                     of text that match any words to be scrubbed.
+     * @param blockText A StringBuilder containing the combined text extracted from the tokens.
+     *                  This is used as the primary source for identifying occurrences of the
+     *                  words to scrub.
+     * @param wordsToScrub A list of strings representing the words to be scrubbed from the text
+     *                     sequence. Matching is performed in a case-insensitive manner, and tokens
+     *                     containing matched words are updated to reflect the redaction.
+     */
+    private void processTextSequence(
+            List<TokenRef> activeTokens,
+            StringBuilder blockText,
+            List<String> wordsToScrub
+    ) {
+        // null check
+        if (activeTokens == null || blockText == null || wordsToScrub == null) return;
         if (activeTokens.isEmpty() || blockText.isEmpty()) return;
 
         String text = blockText.toString().toLowerCase();
@@ -236,8 +306,27 @@ public class PDFRedactor {
         }
     }
 
+    /**
+     * Draws filled black rectangles on the specified PDF page within the provided rectangular areas.
+     * Each rectangle is drawn using the coordinates, width, and height specified in the {@link Rectangle2D} objects.
+     *
+     * @param document The PDF document containing the page to which the black boxes will be added.
+     * @param page The specific page of the PDF document where the black boxes will be drawn.
+     * @param boxes A list of {@link Rectangle2D} objects defining the positions and dimensions of the black rectangles to be drawn.
+     *              Each rectangle is represented in the coordinate system of the page.
+     * @throws IOException If an error occurs while accessing the PDF document or writing to the page.
+     */
     private void drawBlackBoxes(PDDocument document, PDPage page, List<Rectangle2D> boxes) throws IOException {
-        try (PDPageContentStream contentStream = new PDPageContentStream(document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+        if (document == null || page == null || boxes == null) return;
+        try (PDPageContentStream contentStream =
+                     new PDPageContentStream(
+                             document,
+                             page,
+                             PDPageContentStream.AppendMode.APPEND,
+                             true,
+                             true
+                     )
+        ) {
             contentStream.setNonStrokingColor(0, 0, 0);
             for (Rectangle2D box : boxes) {
                 contentStream.addRect((float) box.getX(), (float) box.getY(), (float) box.getWidth(), (float) box.getHeight());
