@@ -2,7 +2,7 @@ plugins {
     id 'java-library'
 }
 
-group = 'nz.co.rock3125.pdfredactor'
+group = 'nz.peter.pdfredaction'
 version = '1.0.0'
 
 repositories {
