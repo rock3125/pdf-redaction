@@ -9,7 +9,7 @@
  *
  */
 
-package nz.co.rock3125.pdfredactor;
+package nz.peter.pdfredaction;
 
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
 import org.apache.pdfbox.cos.COSName;

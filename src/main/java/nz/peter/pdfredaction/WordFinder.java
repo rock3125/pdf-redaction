@@ -9,7 +9,7 @@
  *
  */
 
-package nz.co.rock3125.pdfredactor;
+package nz.peter.pdfredaction;
 
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
