@@ -4,7 +4,7 @@ plugins {
 
 // build the JAR:  ./gradlew jar
 
-group = 'co.nz.rock.pdfredactor'
+group = 'nz.co.rock.pdfredactor'
 version = '1.0.0'
 
 repositories {
