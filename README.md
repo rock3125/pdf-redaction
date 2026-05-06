@@ -20,7 +20,7 @@ PDDocument document = Loader.loadPDF(new File("input.pdf"));
 // 1. Instantiate the redactor
 // Parameters: (PDDocument, boolean redact)
 // Use 'true' to permanently redact, 'false' for red-outline preview mode
-PDFRedactor redaction = new PDFRedactor();
+PdfRedaction redaction = new PdfRedaction();
 redaction.redact(
         document, 
         Arrays.asList("confidential", "SECRET_WORD"), 

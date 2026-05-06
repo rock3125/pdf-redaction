@@ -33,7 +33,7 @@ import java.util.List;
 /**
  * A utility to redact text, coordinates, and overlapping images inside a PDF document.
  */
-public class PDFRedactor {
+public class PdfRedaction {
 
     /**
      * Redacts specified words and/or rectangular areas from a PDF document by removing or masking

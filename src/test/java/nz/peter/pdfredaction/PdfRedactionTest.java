@@ -32,9 +32,9 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class PDFRedactorTest {
+class PdfRedactionTest {
 
-    private final PDFRedactor redactor = new PDFRedactor();
+    private final PdfRedaction redactor = new PdfRedaction();
 
     @Test
     void testRedactionAPI() throws IOException {
@@ -304,7 +304,7 @@ class PDFRedactorTest {
      */
     private byte[] loadBinary(String resourceFilename) throws IOException {
         assertNotNull(resourceFilename);
-        try (InputStream inputStream = PDFRedactorTest.class.getResourceAsStream(resourceFilename)) {
+        try (InputStream inputStream = PdfRedactionTest.class.getResourceAsStream(resourceFilename)) {
             if (inputStream == null)
                 throw new FileNotFoundException(resourceFilename);
             return inputStream.readAllBytes();
