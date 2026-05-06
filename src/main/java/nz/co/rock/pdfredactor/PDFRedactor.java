@@ -6,10 +6,7 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSString;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdfwriter.ContentStreamWriter;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
-import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.*;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.contentstream.operator.Operator;
@@ -36,7 +33,7 @@ public class PDFRedactor {
 
             List<Rectangle2D> pageRedactionBoxes = new ArrayList<>();
 
-            // 1. Add user-defined coordinate boxes for this page
+            // Add user-defined coordinate boxes for this page
             if (areas != null) {
                 for (RectangleOnPage area : areas) {
                     if (area.getPage() == pageNum) {
@@ -45,7 +42,7 @@ public class PDFRedactor {
                 }
             }
 
-            // 2. Find bounding boxes for the requested words
+            // Find bounding boxes for the requested words
             if (words != null && !words.isEmpty()) {
                 WordFinder textStripper = new WordFinder(words);
                 textStripper.setStartPage(pageNum);
@@ -58,19 +55,40 @@ public class PDFRedactor {
                 continue;
             }
 
-            // 3. Scrub text from the content stream (Font-Aware & Kerning-Aware)
+            // Scrub text from the content stream (Font-Aware & Kerning-Aware)
             if (words != null && !words.isEmpty()) {
                 scrubTextTokens(document, page, words);
             }
 
-            // 4. Redact overlapping images
+            // Redact overlapping images
             ImageRedactor imageRedactor = new ImageRedactor(document, page, pageRedactionBoxes);
             imageRedactor.processPage(page);
 
-            // 5. Draw the physical black boxes over the redacted areas
+            // Draw the physical black boxes over the redacted areas
             drawBlackBoxes(document, page, pageRedactionBoxes);
+
+            // Clear the document's metadata
+            clearMetadata(document);
         }
     }
+
+
+    /**
+     * Completely removes all legacy and XMP metadata from the document.
+     */
+    private void clearMetadata(PDDocument document) {
+        // Clear the legacy Document Information Dictionary
+        // (This holds Author, Title, Creator, Producer, CreationDate, etc.)
+        // Replacing it with a brand new, empty object wipes the old dictionary.
+        document.setDocumentInformation(new PDDocumentInformation());
+
+        // Clear the modern XMP Metadata Stream
+        // Setting this to null removes the entire XML metadata stream from the catalog.
+        if (document.getDocumentCatalog() != null) {
+            document.getDocumentCatalog().setMetadata(null);
+        }
+    }
+
 
     /**
      * Advanced stream scrubber that decodes CID fonts and stitches kerning arrays
