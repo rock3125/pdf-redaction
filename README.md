@@ -9,7 +9,21 @@ removes all metadata from the PDF document.
 * Keyword Matching: Automatically identifies and redacts specific phrases across multiple pages.
 * Image Pixel Masking: Detects when a raster image overlaps with a redaction zone and re-encodes the image with blacked-out pixels.
 
-## Usage
+## Include
+
+```gradle
+implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.0'
+```
+
+```xml
+<dependency>
+    <groupId>nz.peter.pdfredaction</groupId>
+    <artifactId>pdf-redaction</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+## Code Usage
 The following example demonstrates how to initialize the redactor, define manual regions, set a keyword list,
 and apply the changes.
 
