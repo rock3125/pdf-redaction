@@ -53,6 +53,13 @@ gradle jar
 # output: ./build/libs/pdf-redaction-1.0.1.jar
 ```
 
+## publish to maven central
+
+```bash
+nano ~/.gradle/gradle.properties
+./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
+```
+
 ## Requirements
 * Java 17+
 * Apache PDFBox 3.x.
