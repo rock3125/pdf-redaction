@@ -242,6 +242,15 @@ class PdfRedactionTest {
         String textBefore = extractTextFromPDF(doc);
         assertTrue(textBefore.contains(number));
 
+        List<RectangleOnPage> rectangles = redactor.getRedactionRectangles(doc, Collections.singletonList(number));
+        assertEquals(1, rectangles.size());
+        RectangleOnPage rect = rectangles.get(0);
+        assertEquals(1, rect.getPage());
+        assertTrue(rect.getX() > 0);
+        assertTrue(rect.getY() > 0);
+        assertTrue(rect.getWidth() > 80);
+        assertTrue(rect.getHeight() > 10);
+
         redactor.redact(
                 doc,
                 Collections.singletonList(number),
@@ -250,6 +259,10 @@ class PdfRedactionTest {
 
         String textAfter = extractTextFromPDF(doc);
         assertFalse(textAfter.contains(number));
+
+        List<RectangleOnPage> rectangles2 = redactor.getRedactionRectangles(doc, Collections.singletonList(number));
+        assertTrue(rectangles2.isEmpty());
+
         doc.close();
     }
 

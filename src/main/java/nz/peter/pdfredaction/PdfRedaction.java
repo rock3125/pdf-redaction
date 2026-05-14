@@ -28,6 +28,7 @@ import java.awt.geom.Rectangle2D;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -100,6 +101,53 @@ public class PdfRedaction {
             // Clear the document's metadata
             clearMetadata(document);
         }
+    }
+
+
+    /**
+     * Extracts a list of rectangular regions on specific pages of a PDF document where specified words are located.
+     * These regions can be used for redaction purposes.
+     *
+     * @param document The PDF document to analyze. If null, an empty list is returned.
+     * @param words A list of words to locate in the document. If null or empty, no regions are located, and an empty list is returned.
+     * @return A list of {@link RectangleOnPage} objects, where each object specifies the 1-based page number and
+     *         the coordinates of a rectangular region containing one of the specified words. If no matches are found or
+     *         inputs are invalid, an empty list is returned.
+     * @throws IOException If an error occurs while processing the PDF document.
+     */
+    public List<RectangleOnPage> getRedactionRectangles(PDDocument document, List<String> words) throws IOException {
+        // null? - just ignore it
+        if (document == null) return Collections.emptyList();
+        // nothing to redact?
+        if (words == null || words.isEmpty()) return Collections.emptyList();
+
+        int numPages = document.getNumberOfPages();
+        ArrayList<RectangleOnPage> pageRectangles = new ArrayList<>();
+
+        for (int i = 0; i < numPages; i++) {
+            int pageNum = i + 1;
+            PDPage page = document.getPage(i);
+            if (page == null) continue;
+
+            List<Rectangle2D> pageRedactionBoxes = new ArrayList<>();
+
+            // Find bounding boxes for the requested words
+            WordFinder textStripper = new WordFinder(words);
+            textStripper.setStartPage(pageNum);
+            textStripper.setEndPage(pageNum);
+            textStripper.getText(document);
+            for (Rectangle2D boundingBox : textStripper.getFoundBoundingBoxes()) {
+                RectangleOnPage rop = new RectangleOnPage(
+                        pageNum,
+                        (float)boundingBox.getX(),
+                        (float)boundingBox.getY(),
+                        (float)boundingBox.getWidth(),
+                        (float)boundingBox.getHeight()
+                );
+                pageRectangles.add(rop);
+            }
+        }
+        return pageRectangles;
     }
 
 
