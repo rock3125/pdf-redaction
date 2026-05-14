@@ -63,3 +63,7 @@ nano ~/.gradle/gradle.properties
 ## Requirements
 * Java 17+
 * Apache PDFBox 3.x.
+
+## versions
+* 1.0.1 fixed word boundaries for more complex entities such as telephone numbers
+* 1.0.0 initial release
