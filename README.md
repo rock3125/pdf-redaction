@@ -12,14 +12,14 @@ PDF-redaction/PDF-redactor is completely free.  Apache 2 licensed, completely op
 ## Include
 
 ```gradle
-implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.1'
+implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.2'
 ```
 
 ```xml
 <dependency>
     <groupId>nz.peter.pdfredaction</groupId>
     <artifactId>pdf-redaction</artifactId>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -39,7 +39,9 @@ redaction.redact(
         // look for and remove these words on all pages
         Arrays.asList("confidential", "SECRET_WORD"),
         // redact images @ x=10,y=10,w=100,h=100 on page 1 (the first page)
-        Collections.singletonList(new RectangleOnPage(1, 10, 10, 100, 100))
+        Collections.singletonList(new RectangleOnPage(1, 10, 10, 100, 100)),
+        // redact if false, and draw a purple rectangle around the text if true
+        false
         );
 
 // Save the modified document into a new PDF with all its metadata removed
@@ -50,7 +52,7 @@ document.close();
 ## Build the JAR
 ```
 gradle jar
-# output: ./build/libs/pdf-redaction-1.0.1.jar
+# output: ./build/libs/pdf-redaction-1.0.2.jar
 ```
 
 ## publish to maven central
@@ -65,5 +67,6 @@ nano ~/.gradle/gradle.properties
 * Apache PDFBox 3.x.
 
 ## versions
+* 1.0.2 added purple outline rects and fixed some issues with rotation
 * 1.0.1 fixed word boundaries for more complex entities such as telephone numbers
 * 1.0.0 initial release

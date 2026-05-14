@@ -26,7 +26,6 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.*;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -61,7 +60,8 @@ class PdfRedactionTest {
             redactor.redact(
                     doc,
                     Arrays.asList("confidential", "SECRET_WORD"),
-                    Collections.singletonList(new RectangleOnPage(1, 10, 10, 100, 100))
+                    Collections.singletonList(new RectangleOnPage(1, 10, 10, 100, 100)),
+                    false
             );
 
             String text2 = extractTextFromPDF(doc).trim();
@@ -105,7 +105,8 @@ class PdfRedactionTest {
             redactor.redact(
                     doc,
                     null, // No text to redact
-                    Collections.singletonList(new RectangleOnPage(1, 175, 175, 50, 50))
+                    Collections.singletonList(new RectangleOnPage(1, 175, 175, 50, 50)),
+                    false
             );
 
             long redPixels2 = analyzer.countPixels(doc, 0xff0000);
@@ -148,7 +149,8 @@ class PdfRedactionTest {
             redactor.redact(
                     doc,
                     null, // No text to redact
-                    Collections.singletonList(new RectangleOnPage(1, 175, 175, 50, 50))
+                    Collections.singletonList(new RectangleOnPage(1, 175, 175, 50, 50)),
+                    false
             );
 
             long redPixels2 = analyzer.countPixels(doc, 0xff0000);
@@ -197,11 +199,37 @@ class PdfRedactionTest {
         redactor.redact(
                 doc,
                 List.of("richiesta"),
-                null
+                null,
+                false
         );
 
         String textAfter = extractTextFromPDF(doc);
         assertFalse(textAfter.contains("richiesta"));
+        doc.close();
+    }
+
+    // test redaction in a 180 degree rotated pdf
+    @Test
+    public void testOcrPdfWith180DegreesRotation2() throws IOException {
+        // load our test PDF
+        byte[] bytes = loadBinary("/rotated_180_area.pdf");
+        assertTrue(bytes.length > 0);
+        PDDocument doc = Loader.loadPDF(bytes);
+
+        String textBefore = extractTextFromPDF(doc);
+        assertTrue(textBefore.contains("richiesta"));
+
+        redactor.redact(
+                doc,
+                List.of("richiesta"),
+                null,
+                true
+        );
+        String textAfter = extractTextFromPDF(doc);
+        // not removed
+        assertTrue(textAfter.contains("richiesta"));
+        //savePDF(doc, "/home/rock/test1.pdf");
+        doc.close();
     }
 
     // test the redaction of a multipage pdf with vector images
@@ -221,7 +249,8 @@ class PdfRedactionTest {
         redactor.redact(
                 doc,
                 myList,
-                null
+                null,
+                false
         );
 
         //savePDF(doc, "test1.pdf");
@@ -230,6 +259,7 @@ class PdfRedactionTest {
         for (String word : myList) {
             assertFalse(textAfter.contains(word), "Word " + word + " should be removed from the PDF");
         }
+        doc.close();
     }
 
     @Test
@@ -254,7 +284,8 @@ class PdfRedactionTest {
         redactor.redact(
                 doc,
                 Collections.singletonList(number),
-                null
+                null,
+                false
         );
 
         String textAfter = extractTextFromPDF(doc);
@@ -282,7 +313,8 @@ class PdfRedactionTest {
             redactor.redact(
                     doc,
                     Collections.singletonList("CONFIDENTIAL"),
-                    null
+                    null,
+                    false
             );
 
             // Post-condition: Verify the output

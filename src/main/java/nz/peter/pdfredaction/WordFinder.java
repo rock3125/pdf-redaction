@@ -11,6 +11,8 @@
 
 package nz.peter.pdfredaction;
 
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.pdfbox.text.TextPosition;
 
@@ -25,13 +27,15 @@ import java.util.regex.Pattern;
  * Internal utility to find the physical bounding boxes of target words.
  */
 class WordFinder extends PDFTextStripper {
+    private final PDPage page;
     private final List<Pattern> targetPatterns = new ArrayList<>();
     private final List<Rectangle2D> foundBoundingBoxes = new ArrayList<>();
 
     // constructor
-    public WordFinder(List<String> targetWords) {
+    public WordFinder(PDPage page, List<String> targetWords) {
         super();
         setSortByPosition(true); // Mandatory for rotated pages
+        this.page = page;
 
         // Pre-compile regex patterns with word boundaries (\b) and case insensitivity
         for (String word : targetWords) {
@@ -68,12 +72,42 @@ class WordFinder extends PDFTextStripper {
                     TextPosition firstChar = textPositions.get(index);
                     TextPosition lastChar = textPositions.get(endIndex);
 
-                    float x = firstChar.getXDirAdj();
-                    float y = firstChar.getPageHeight() - firstChar.getYDirAdj();
-                    float width = (lastChar.getXDirAdj() + lastChar.getWidthDirAdj()) - x;
-                    float height = firstChar.getHeightDir();
+                    float vX = firstChar.getXDirAdj();
+                    float vY = firstChar.getPageHeight() - firstChar.getYDirAdj();
+                    float vW = (lastChar.getXDirAdj() + lastChar.getWidthDirAdj()) - vX;
+                    float vH = firstChar.getHeightDir();
 
-                    foundBoundingBoxes.add(new Rectangle2D.Float(x - 1, y - 2, width + 2, height + 4));
+                    // Add padding to the visual box before transformation so it scales correctly
+                    vX -= 1;
+                    vY -= 2;
+                    vW += 2;
+                    vH += 4;
+
+                    // 2. Convert to Native Unrotated Coordinates (Machine Space)
+                    PDRectangle cropBox = page.getCropBox();
+                    int rotation = page.getRotation();
+
+                    float nX = vX;
+                    float nY = vY;
+                    float nW = vW;
+                    float nH = vH;
+
+                    if (rotation == 90) {
+                        nX = cropBox.getWidth() - vY - vH;
+                        nY = vX;
+                        nW = vH;
+                        nH = vW;
+                    } else if (rotation == 180) {
+                        nX = cropBox.getWidth() - vX - vW;
+                        nY = cropBox.getHeight() - vY - vH;
+                    } else if (rotation == 270) {
+                        nX = vY;
+                        nY = cropBox.getHeight() - vX - vW;
+                        nW = vH;
+                        nH = vW;
+                    }
+
+                    foundBoundingBoxes.add(new Rectangle2D.Float(nX, nY, nW, nH));
                 }
             }
         }

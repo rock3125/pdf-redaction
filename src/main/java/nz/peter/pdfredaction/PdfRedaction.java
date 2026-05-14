@@ -46,9 +46,16 @@ public class PdfRedaction {
      * @param areas A list of rectangular areas, each specifying a page and coordinates, to
      *              be redacted. Can be null or empty if only word-based redactions are
      *              performed. Each rectangle should correspond to a specific 1-based page number.
+     * @param outlineOnly If true, only outline rectangles will be drawn over the redacted areas
+     *                    and no actual redaction will occur, for visual inspection.
      * @throws IOException If an error occurs while processing the PDF document.
      */
-    public void redact(PDDocument document, List<String> words, List<RectangleOnPage> areas) throws IOException {
+    public void redact(
+            PDDocument document,
+            List<String> words,
+            List<RectangleOnPage> areas,
+            boolean outlineOnly
+    ) throws IOException {
         // null? - just ignore it
         if (document == null) return;
         // nothing to redact?
@@ -74,7 +81,7 @@ public class PdfRedaction {
 
             // Find bounding boxes for the requested words
             if (words != null && !words.isEmpty()) {
-                WordFinder textStripper = new WordFinder(words);
+                WordFinder textStripper = new WordFinder(page, words);
                 textStripper.setStartPage(pageNum);
                 textStripper.setEndPage(pageNum);
                 textStripper.getText(document);
@@ -87,16 +94,23 @@ public class PdfRedaction {
             }
 
             // Scrub text from the content stream (Font-Aware & Kerning-Aware)
-            if (words != null && !words.isEmpty()) {
+            if (!outlineOnly && words != null && !words.isEmpty()) {
                 scrubTextTokens(document, page, words);
             }
 
             // Redact overlapping images
-            ImageRedactor imageRedactor = new ImageRedactor(document, page, pageRedactionBoxes);
-            imageRedactor.processPage(page);
+            if (!outlineOnly) {
+                ImageRedactor imageRedactor = new ImageRedactor(document, page, pageRedactionBoxes);
+                imageRedactor.processPage(page);
+            }
 
-            // Draw the physical black boxes over the redacted areas
-            drawBlackBoxes(document, page, pageRedactionBoxes);
+            if (outlineOnly) {
+                // Draw outline magenta/purple rectangles over the redacted areas
+                drawPurpleRectangles(document, page, pageRedactionBoxes);
+            } else {
+                // Draw the physical black boxes over the redacted areas
+                drawBlackBoxes(document, page, pageRedactionBoxes);
+            }
 
             // Clear the document's metadata
             clearMetadata(document);
@@ -129,10 +143,8 @@ public class PdfRedaction {
             PDPage page = document.getPage(i);
             if (page == null) continue;
 
-            List<Rectangle2D> pageRedactionBoxes = new ArrayList<>();
-
             // Find bounding boxes for the requested words
-            WordFinder textStripper = new WordFinder(words);
+            WordFinder textStripper = new WordFinder(page, words);
             textStripper.setStartPage(pageNum);
             textStripper.setEndPage(pageNum);
             textStripper.getText(document);
@@ -382,6 +394,36 @@ public class PdfRedaction {
                 contentStream.addRect((float) box.getX(), (float) box.getY(), (float) box.getWidth(), (float) box.getHeight());
                 contentStream.fill();
             }
+        }
+    }
+
+    /**
+     * Draws outline magenta/purle rectangles on the specified PDF page within the provided rectangular areas.
+     * Each rectangle is drawn using the coordinates, width, and height specified in the {@link Rectangle2D} objects.
+     *
+     * @param document The PDF document containing the page to which the black boxes will be added.
+     * @param page The specific page of the PDF document where the black boxes will be drawn.
+     * @param boxes A list of {@link Rectangle2D} objects defining the positions and dimensions of the meganta/purple rectangles to be drawn.
+     *              Each rectangle is represented in the coordinate system of the page.
+     * @throws IOException If an error occurs while accessing the PDF document or writing to the page.
+     */
+    private void drawPurpleRectangles(PDDocument document, PDPage page, List<Rectangle2D> boxes) throws IOException {
+        if (document == null || page == null || boxes == null) return;
+        try (PDPageContentStream contentStream =
+                     new PDPageContentStream(
+                             document,
+                             page,
+                             PDPageContentStream.AppendMode.APPEND,
+                             true,
+                             true
+                     )
+        ) {
+            contentStream.setStrokingColor(0.6f, 0.0f, 0.6f);
+            contentStream.setLineWidth(1.0f);
+            for (Rectangle2D box : boxes) {
+                contentStream.addRect((float) box.getX(), (float) box.getY(), (float) box.getWidth(), (float) box.getHeight());
+            }
+            contentStream.stroke();
         }
     }
 
