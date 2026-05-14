@@ -12,14 +12,14 @@ PDF-redaction/PDF-redactor is completely free.  Apache 2 licensed, completely op
 ## Include
 
 ```gradle
-implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.0'
+implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.1'
 ```
 
 ```xml
 <dependency>
     <groupId>nz.peter.pdfredaction</groupId>
     <artifactId>pdf-redaction</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
@@ -50,7 +50,7 @@ document.close();
 ## Build the JAR
 ```
 gradle jar
-# output: ./build/libs/pdf-redaction-1.0.0.jar
+# output: ./build/libs/pdf-redaction-1.0.1.jar
 ```
 
 ## Requirements

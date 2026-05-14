@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'nz.peter.pdfredaction'
-version = '1.0.0'
+version = '1.0.1'
 
 mavenPublishing {
     // Configure your POM metadata (Required by Maven Central)

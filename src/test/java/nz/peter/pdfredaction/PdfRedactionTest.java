@@ -26,6 +26,7 @@ import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -229,6 +230,27 @@ class PdfRedactionTest {
         for (String word : myList) {
             assertFalse(textAfter.contains(word), "Word " + word + " should be removed from the PDF");
         }
+    }
+
+    @Test
+    public void testTelephoneNumberRedaction() throws IOException {
+        // load our test PDF
+        String number = "+1-602-373-2455";
+        byte[] bytes = loadBinary("/telephone-number.pdf");
+        assertTrue(bytes.length > 0);
+        PDDocument doc = Loader.loadPDF(bytes);
+        String textBefore = extractTextFromPDF(doc);
+        assertTrue(textBefore.contains(number));
+
+        redactor.redact(
+                doc,
+                Collections.singletonList(number),
+                null
+        );
+
+        String textAfter = extractTextFromPDF(doc);
+        assertFalse(textAfter.contains(number));
+        doc.close();
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////

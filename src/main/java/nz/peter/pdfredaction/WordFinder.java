@@ -36,7 +36,7 @@ class WordFinder extends PDFTextStripper {
         // Pre-compile regex patterns with word boundaries (\b) and case insensitivity
         for (String word : targetWords) {
             if (word != null && !word.trim().isEmpty()) {
-                targetPatterns.add(Pattern.compile("\\b" + Pattern.quote(word) + "\\b", Pattern.CASE_INSENSITIVE));
+                targetPatterns.add(Pattern.compile("(?<!\\w)" + Pattern.quote(word) + "(?!\\w)", Pattern.CASE_INSENSITIVE));
             }
         }
     }
