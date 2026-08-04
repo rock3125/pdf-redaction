@@ -1,4 +1,5 @@
 .gradle
+gpg
 .idea/
 *.pdf
 build/
