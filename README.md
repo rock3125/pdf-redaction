@@ -67,6 +67,7 @@ nano ~/.gradle/gradle.properties
 * Apache PDFBox 3.x.
 
 ## versions
+* 1.0.3 fixed whole-line over-redaction on subset fonts, word-boundary scrubbing, box placement for rotated text and offset cropBoxes, and scrubbing of words split across positioning operators
 * 1.0.2 added purple outline rects and fixed some issues with rotation
 * 1.0.1 fixed word boundaries for more complex entities such as telephone numbers
 * 1.0.0 initial release
