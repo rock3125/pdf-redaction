@@ -25,11 +25,14 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 
 import java.awt.geom.Rectangle2D;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * A utility to redact text, coordinates, and overlapping images inside a PDF document.
@@ -188,11 +191,35 @@ public class PdfRedaction {
         PDFStreamParser parser = new PDFStreamParser(page);
         List<Object> tokens = parser.parse();
 
-        PDResources resources = page.getResources();
-        PDFont currentFont = null;
+        // Same word-boundary rule as WordFinder, so the scrubbed text always matches the drawn
+        // boxes. Whitespace in a search phrase is matched flexibly (\s*) because inter-word
+        // spacing is often just a positioning gap with no actual space glyph in the stream.
+        List<Pattern> scrubPatterns = new ArrayList<>();
+        for (String word : wordsToScrub) {
+            if (word != null && !word.trim().isEmpty()) {
+                StringBuilder regex = new StringBuilder("(?<!\\w)");
+                String[] parts = word.trim().split("\\s+");
+                for (int p = 0; p < parts.length; p++) {
+                    if (p > 0) regex.append("\\s*");
+                    regex.append(Pattern.quote(parts[p]));
+                }
+                regex.append("(?!\\w)");
+                scrubPatterns.add(Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE));
+            }
+        }
 
-        List<TokenRef> activeTokens = new ArrayList<>();
-        StringBuilder blockText = new StringBuilder();
+        PDResources resources = page.getResources();
+
+        // Producers routinely split single words - and even single glyph runs - across
+        // positioning operators (Td/Tm), across text objects (BT..ET), and across TJ kerning
+        // adjustments. Flushing the match buffer at any of those would leave the split word
+        // unmatched, and therefore silently unredacted, in the stream. So instead of flushing
+        // on operators, we track the text matrix and pen position, and only flush the buffer
+        // when a SHOW operation actually starts on a different baseline (a new visual line).
+        // Same-line gaps wider than a fraction of the font size become a synthetic space so
+        // words from different columns or tab stops never fuse together.
+        ScrubState st = new ScrubState();
+        st.patterns = scrubPatterns;
 
         for (int i = 0; i < tokens.size(); i++) {
             Object token = tokens.get(i);
@@ -200,36 +227,106 @@ public class PdfRedaction {
             if (token instanceof Operator op) {
                 String opName = op.getName();
 
-                if ("Tf".equals(opName) && i >= 2) {
-                    COSName fontName = (COSName) tokens.get(i - 2);
-                    if (resources != null) {
-                        currentFont = resources.getFont(fontName);
+                switch (opName) {
+                    case "Tf" -> {
+                        if (resources != null) {
+                            Object nameTok = i >= 2 ? tokens.get(i - 2) : null;
+                            if (nameTok instanceof COSName fontName) {
+                                st.font = resources.getFont(fontName);
+                            }
+                            Float size = numberAt(tokens, i - 1);
+                            if (size != null) st.fontSize = size;
+                        }
                     }
-                } else if ("BT".equals(opName)) {
-                    // Begin Text block: clear the buffer
-                    activeTokens.clear();
-                    blockText.setLength(0);
-                } else if ("ET".equals(opName) || "Td".equals(opName) || "TD".equals(opName) || "Tm".equals(opName) || "T*".equals(opName)) {
-                    // End of text block or line break: process the buffered sequence
-                    processTextSequence(activeTokens, blockText, wordsToScrub);
-                    activeTokens.clear();
-                    blockText.setLength(0);
+                    case "BT" -> {
+                        st.tm = new float[]{1, 0, 0, 1, 0, 0};
+                        st.penX = 0;
+                    }
+                    case "ET" -> {
+                        st.tm = null; // buffer intentionally kept - lines may span text objects
+                    }
+                    case "Tm" -> {
+                        Float a = numberAt(tokens, i - 6);
+                        Float b = numberAt(tokens, i - 5);
+                        Float c = numberAt(tokens, i - 4);
+                        Float d = numberAt(tokens, i - 3);
+                        Float e = numberAt(tokens, i - 2);
+                        Float f = numberAt(tokens, i - 1);
+                        if (a != null && b != null && c != null && d != null && e != null && f != null) {
+                            st.tm = new float[]{a, b, c, d, e, f};
+                        } else {
+                            st.tm = null;
+                        }
+                        st.penX = 0;
+                    }
+                    case "Td", "TD" -> {
+                        Float tx = numberAt(tokens, i - 2);
+                        Float ty = numberAt(tokens, i - 1);
+                        if (tx != null && ty != null && st.tm != null) {
+                            translateTm(st, tx, ty);
+                            if ("TD".equals(opName)) st.leading = -ty;
+                        } else {
+                            st.tm = null;
+                        }
+                        st.penX = 0;
+                    }
+                    case "T*" -> {
+                        if (st.tm != null) translateTm(st, 0, -st.leading);
+                        st.penX = 0;
+                    }
+                    case "TL" -> {
+                        Float l = numberAt(tokens, i - 1);
+                        if (l != null) st.leading = l;
+                    }
+                    case "Tc" -> {
+                        Float v = numberAt(tokens, i - 1);
+                        if (v != null) st.charSpacing = v;
+                    }
+                    case "Tw" -> {
+                        Float v = numberAt(tokens, i - 1);
+                        if (v != null) st.wordSpacing = v;
+                    }
+                    case "Tz" -> {
+                        Float v = numberAt(tokens, i - 1);
+                        if (v != null) st.hScale = v / 100f;
+                    }
+                    default -> { /* other operators do not affect text position tracking */ }
                 }
-            } else if (token instanceof COSString) {
-                processCOSString((COSString) token, currentFont, activeTokens, blockText);
+            } else if (token instanceof COSString cosString) {
+                // Peek: ' and " move to the next line BEFORE showing their operand string
+                Object next = i + 1 < tokens.size() ? tokens.get(i + 1) : null;
+                if (next instanceof Operator nextOp
+                        && ("'".equals(nextOp.getName()) || "\"".equals(nextOp.getName()))) {
+                    if ("\"".equals(nextOp.getName())) {
+                        Float aw = numberAt(tokens, i - 2);
+                        Float ac = numberAt(tokens, i - 1);
+                        if (aw != null) st.wordSpacing = aw;
+                        if (ac != null) st.charSpacing = ac;
+                    }
+                    if (st.tm != null) translateTm(st, 0, -st.leading);
+                    st.penX = 0;
+                }
+                showString(cosString, st);
 
             } else if (token instanceof COSArray array) {
                 for (int j = 0; j < array.size(); j++) {
                     COSBase element = array.get(j);
-                    if (element instanceof COSString) {
-                        processCOSString((COSString) element, currentFont, activeTokens, blockText);
+                    if (element instanceof COSString cosString) {
+                        showString(cosString, st);
+                    } else if (element instanceof org.apache.pdfbox.cos.COSNumber num) {
+                        // TJ adjustment: moves the pen; a large gap is a word separator
+                        float shift = -num.floatValue() / 1000f * st.fontSize * st.hScale;
+                        st.penX += shift;
+                        if (Math.abs(shift) > WORD_GAP_EM * st.fontSize && !st.blockText.isEmpty()) {
+                            st.blockText.append(' ');
+                        }
                     }
                 }
             }
         }
 
         // Catch any remaining text at the end of the stream
-        processTextSequence(activeTokens, blockText, wordsToScrub);
+        processTextSequence(st.activeTokens, st.blockText, scrubPatterns);
 
         // Rewrite the modified tokens back to the page stream
         PDStream newContents = new PDStream(document);
@@ -240,6 +337,149 @@ public class PdfRedaction {
         page.setContents(newContents);
     }
 
+
+    /** Same-line gaps wider than this fraction of the font size become a synthetic space. */
+    private static final float WORD_GAP_EM = 0.15f;
+    /** Two shows whose baselines differ by less than this are considered the same line. */
+    private static final float BASELINE_TOLERANCE = 1.0f;
+
+    /**
+     * Returns the numeric operand at the given token index, or null if the index is
+     * out of range or the token is not a number.
+     */
+    private Float numberAt(List<Object> tokens, int index) {
+        if (index < 0 || index >= tokens.size()) return null;
+        if (tokens.get(index) instanceof org.apache.pdfbox.cos.COSNumber num) {
+            return num.floatValue();
+        }
+        return null;
+    }
+
+    /** Applies a text-space translation (Td/TD/T*) to the tracked text matrix. */
+    private void translateTm(ScrubState st, float tx, float ty) {
+        st.tm[4] += tx * st.tm[0] + ty * st.tm[2];
+        st.tm[5] += tx * st.tm[1] + ty * st.tm[3];
+    }
+
+    /**
+     * Handles one show operation (the string of Tj/'/" or one element of a TJ array).
+     * Flushes the buffered line when this show starts on a different baseline, inserts a
+     * synthetic space when it continues the line after a word-sized gap, then appends the
+     * decoded string to the buffer.
+     */
+    private void showString(COSString cosString, ScrubState st) {
+        if (cosString == null) return;
+
+        if (st.tm == null) {
+            // Position unknown: process whatever is buffered, then buffer this string alone
+            flushLine(st);
+            processCOSString(cosString, st.font, st.activeTokens, st.blockText);
+            return;
+        }
+
+        // Device-space start point of this show (the pen may have advanced since tm was set)
+        float startX = st.tm[4] + st.penX * st.tm[0];
+        float startY = st.tm[5] + st.penX * st.tm[1];
+
+        boolean sameLine = false;
+        if (st.lineBasis != null
+                && st.lineBasis[0] == st.tm[0] && st.lineBasis[1] == st.tm[1]
+                && st.lineBasis[2] == st.tm[2] && st.lineBasis[3] == st.tm[3]) {
+            if (st.tm[1] == 0 && st.tm[0] != 0) {
+                // horizontal text: the baseline coordinate is f
+                sameLine = Math.abs(st.tm[5] - st.lineCoord) < BASELINE_TOLERANCE;
+            } else if (st.tm[0] == 0 && st.tm[1] != 0) {
+                // vertical (90/270 rotated) text: the baseline coordinate is e
+                sameLine = Math.abs(st.tm[4] - st.lineCoord) < BASELINE_TOLERANCE;
+            }
+        }
+
+        if (!sameLine) {
+            flushLine(st);
+            st.lineBasis = st.tm.clone();
+            st.lineCoord = (st.tm[1] == 0) ? st.tm[5] : st.tm[4];
+        } else if (st.haveExpected && !st.blockText.isEmpty()) {
+            // Same line: synthesize a space if the gap since the previous show is word-sized
+            float gapDevice;
+            float scale;
+            if (st.tm[1] == 0) {
+                gapDevice = startX - st.expectedX;
+                scale = st.tm[0];
+            } else {
+                gapDevice = startY - st.expectedY;
+                scale = st.tm[1];
+            }
+            float gapText = gapDevice / scale;
+            float fontSize = st.fontSize > 0 ? st.fontSize : 10f;
+            if (Math.abs(gapText) > WORD_GAP_EM * fontSize) {
+                st.blockText.append(' ');
+            }
+        }
+
+        processCOSString(cosString, st.font, st.activeTokens, st.blockText);
+
+        st.penX += textAdvance(cosString, st);
+        st.expectedX = st.tm[4] + st.penX * st.tm[0];
+        st.expectedY = st.tm[5] + st.penX * st.tm[1];
+        st.haveExpected = true;
+    }
+
+    /** Processes and clears the buffered line. */
+    private void flushLine(ScrubState st) {
+        processTextSequence(st.activeTokens, st.blockText, st.patterns);
+        st.activeTokens.clear();
+        st.blockText.setLength(0);
+        st.lineBasis = null;
+        st.haveExpected = false;
+    }
+
+    /**
+     * Best-effort text-space advance of a shown string (glyph widths, char/word spacing,
+     * horizontal scaling). Only used to decide whether a gap is a word separator, so an
+     * inaccurate width cannot corrupt the output stream.
+     */
+    private float textAdvance(COSString s, ScrubState st) {
+        if (st.font == null) return 0;
+        float total = 0;
+        try {
+            InputStream in = new ByteArrayInputStream(s.getBytes());
+            while (in.available() > 0) {
+                int code = st.font.readCode(in);
+                float width;
+                try {
+                    width = st.font.getWidth(code);
+                } catch (Exception ex) {
+                    width = 500f;
+                }
+                total += width / 1000f * st.fontSize + st.charSpacing + (code == 32 ? st.wordSpacing : 0);
+            }
+        } catch (Exception e) {
+            // best effort - see javadoc
+        }
+        return total * st.hScale;
+    }
+
+    /**
+     * Mutable text state tracked while walking a content stream during scrubbing.
+     */
+    private static class ScrubState {
+        List<Pattern> patterns;
+        PDFont font;
+        float fontSize = 0;
+        float charSpacing = 0;
+        float wordSpacing = 0;
+        float hScale = 1;
+        float leading = 0;
+        float[] tm;                 // current text matrix {a,b,c,d,e,f}; null when unknown
+        float penX = 0;             // text-space advance accumulated since tm was last set
+
+        List<TokenRef> activeTokens = new ArrayList<>();
+        StringBuilder blockText = new StringBuilder();
+        float[] lineBasis;          // a,b,c,d of the buffered line; null when buffer is fresh
+        float lineCoord;            // baseline coordinate (f for horizontal, e for vertical)
+        float expectedX, expectedY; // device point where a continuation show would start
+        boolean haveExpected;
+    }
 
     /**
      * Processes a COSString object by decoding its contents using the provided font,
@@ -265,15 +505,30 @@ public class PdfRedaction {
         if (font == null || cosString == null || activeTokens == null || blockText == null) return;
 
         try {
-            // FIX: Read character codes sequentially using an InputStream
-            InputStream in = new ByteArrayInputStream(cosString.getBytes());
+            // Read character codes sequentially, remembering the byte span of each code so that
+            // redacted glyphs can later be cut out of the original bytes without re-encoding
+            // (font.encode() fails on many subset fonts, so we never rely on it).
+            byte[] bytes = cosString.getBytes();
+            InputStream in = new ByteArrayInputStream(bytes);
             StringBuilder decodedBuilder = new StringBuilder();
+            List<int[]> codeSpans = new ArrayList<>();
+            List<Integer> charToCode = new ArrayList<>();
 
             while (in.available() > 0) {
+                int spanStart = bytes.length - in.available();
                 int code = font.readCode(in);
+                int spanEnd = bytes.length - in.available();
+                if (spanEnd == spanStart) break; // no progress - avoid an endless loop
+
+                int codeIndex = codeSpans.size();
+                codeSpans.add(new int[]{spanStart, spanEnd});
+
                 String unicode = font.toUnicode(code);
-                if (unicode != null) {
+                if (unicode != null && !unicode.isEmpty()) {
                     decodedBuilder.append(unicode);
+                    for (int k = 0; k < unicode.length(); k++) {
+                        charToCode.add(codeIndex);
+                    }
                 }
             }
 
@@ -282,7 +537,12 @@ public class PdfRedaction {
             if (!decoded.isEmpty()) {
                 TokenRef ref = new TokenRef();
                 ref.token = cosString;
-                ref.font = font;
+                ref.originalBytes = bytes;
+                ref.codeSpans = codeSpans;
+                ref.charToCode = new int[charToCode.size()];
+                for (int k = 0; k < charToCode.size(); k++) {
+                    ref.charToCode[k] = charToCode.get(k);
+                }
                 ref.globalStart = blockText.length();
                 blockText.append(decoded);
                 ref.globalEnd = blockText.length();
@@ -311,22 +571,19 @@ public class PdfRedaction {
     private void processTextSequence(
             List<TokenRef> activeTokens,
             StringBuilder blockText,
-            List<String> wordsToScrub
+            List<Pattern> scrubPatterns
     ) {
         // null check
-        if (activeTokens == null || blockText == null || wordsToScrub == null) return;
+        if (activeTokens == null || blockText == null || scrubPatterns == null) return;
         if (activeTokens.isEmpty() || blockText.isEmpty()) return;
 
-        String text = blockText.toString().toLowerCase();
+        String text = blockText.toString();
 
-        for (String word : wordsToScrub) {
-            String searchWord = word.toLowerCase();
-            if (searchWord.isEmpty()) continue;
-
-            int index = text.indexOf(searchWord);
-            while (index >= 0) {
-                int startMatch = index;
-                int endMatch = index + searchWord.length();
+        for (Pattern pattern : scrubPatterns) {
+            Matcher matcher = pattern.matcher(text);
+            while (matcher.find()) {
+                int startMatch = matcher.start();
+                int endMatch = matcher.end();
 
                 // Find which stream tokens contain the matched characters and flag them for removal
                 for (TokenRef ref : activeTokens) {
@@ -338,32 +595,32 @@ public class PdfRedaction {
                         }
                     }
                 }
-                index = text.indexOf(searchWord, index + 1);
             }
         }
 
-        // Rebuild and re-encode the surviving characters back into the stream tokens
+        // Rebuild each modified token from the original bytes, dropping the byte spans of the
+        // glyph codes whose characters were flagged. This keeps untouched glyphs byte-identical
+        // and never needs font.encode(), which fails on many subset fonts.
         for (TokenRef ref : activeTokens) {
-            StringBuilder newText = new StringBuilder();
+            boolean[] removeCode = new boolean[ref.codeSpans.size()];
             boolean modified = false;
 
-            for (char c : ref.chars) {
-                if (c != '\uFFFF') {
-                    newText.append(c);
-                } else {
+            for (int k = 0; k < ref.chars.length; k++) {
+                if (ref.chars[k] == '\uFFFF') {
+                    removeCode[ref.charToCode[k]] = true;
                     modified = true;
                 }
             }
 
             if (modified) {
-                try {
-                    // Encode the string back into the native font's byte format
-                    byte[] newBytes = ref.font.encode(newText.toString());
-                    ref.token.setValue(newBytes);
-                } catch (Exception e) {
-                    // Fallback: If re-encoding fails, entirely blank the token to ensure redaction
-                    ref.token.setValue(new byte[0]);
+                ByteArrayOutputStream survivingBytes = new ByteArrayOutputStream();
+                for (int c = 0; c < ref.codeSpans.size(); c++) {
+                    if (!removeCode[c]) {
+                        int[] span = ref.codeSpans.get(c);
+                        survivingBytes.write(ref.originalBytes, span[0], span[1] - span[0]);
+                    }
                 }
+                ref.token.setValue(survivingBytes.toByteArray());
             }
         }
     }
@@ -432,7 +689,9 @@ public class PdfRedaction {
      */
     private static class TokenRef {
         COSString token;
-        PDFont font;
+        byte[] originalBytes;    // the token's raw bytes as parsed from the stream
+        List<int[]> codeSpans;   // per glyph code: {startByte, endByte} within originalBytes
+        int[] charToCode;        // per decoded char: index into codeSpans it came from
         int globalStart;
         int globalEnd;
         char[] chars;

@@ -72,8 +72,19 @@ class WordFinder extends PDFTextStripper {
                     TextPosition firstChar = textPositions.get(index);
                     TextPosition lastChar = textPositions.get(endIndex);
 
+                    // The *DirAdj coordinates live in the frame in which the TEXT reads
+                    // left-to-right (its writing direction), not the page /Rotate frame.
+                    int dir = Math.round(firstChar.getDir());
+                    dir = ((dir % 360) + 360) % 360;
+                    if (dir != 90 && dir != 180 && dir != 270) dir = 0;
+
+                    float pageW = firstChar.getPageWidth();
+                    float pageH = firstChar.getPageHeight();
+                    // Height of the direction frame: page width and height swap for 90/270
+                    float dirFrameHeight = (dir == 90 || dir == 270) ? pageW : pageH;
+
                     float vX = firstChar.getXDirAdj();
-                    float vY = firstChar.getPageHeight() - firstChar.getYDirAdj();
+                    float vY = dirFrameHeight - firstChar.getYDirAdj();
                     float vW = (lastChar.getXDirAdj() + lastChar.getWidthDirAdj()) - vX;
                     float vH = firstChar.getHeightDir();
 
@@ -83,29 +94,32 @@ class WordFinder extends PDFTextStripper {
                     vW += 2;
                     vH += 4;
 
-                    // 2. Convert to Native Unrotated Coordinates (Machine Space)
-                    PDRectangle cropBox = page.getCropBox();
-                    int rotation = page.getRotation();
-
+                    // 2. Convert from the direction frame back to native (unrotated) page space
                     float nX = vX;
                     float nY = vY;
                     float nW = vW;
                     float nH = vH;
 
-                    if (rotation == 90) {
-                        nX = cropBox.getWidth() - vY - vH;
+                    if (dir == 90) {
+                        nX = pageW - vY - vH;
                         nY = vX;
                         nW = vH;
                         nH = vW;
-                    } else if (rotation == 180) {
-                        nX = cropBox.getWidth() - vX - vW;
-                        nY = cropBox.getHeight() - vY - vH;
-                    } else if (rotation == 270) {
+                    } else if (dir == 180) {
+                        nX = pageW - vX - vW;
+                        nY = pageH - vY - vH;
+                    } else if (dir == 270) {
                         nX = vY;
-                        nY = cropBox.getHeight() - vX - vW;
+                        nY = pageH - vX - vW;
                         nW = vH;
                         nH = vW;
                     }
+
+                    // 3. TextPosition coordinates are relative to the cropBox origin; drawing
+                    // happens in absolute user space, so add the origin back
+                    PDRectangle cropBox = page.getCropBox();
+                    nX += cropBox.getLowerLeftX();
+                    nY += cropBox.getLowerLeftY();
 
                     foundBoundingBoxes.add(new Rectangle2D.Float(nX, nY, nW, nH));
                 }

@@ -257,9 +257,18 @@ class PdfRedactionTest {
 
         String textAfter = extractTextFromPDF(doc);
         for (String word : myList) {
-            assertFalse(textAfter.contains(word), "Word " + word + " should be removed from the PDF");
+            assertFalse(containsWholeWord(textAfter, word), "Word " + word + " should be removed from the PDF");
         }
+        // words merely containing a target ("externally") must NOT be scrubbed
+        assertTrue(textAfter.contains("externally"), "'externally' should survive redaction of 'external'");
         doc.close();
+    }
+
+    /** whole-word, case-insensitive containment check (same boundary rule as the redactor) */
+    private boolean containsWholeWord(String text, String word) {
+        return java.util.regex.Pattern
+                .compile("(?<!\\w)" + java.util.regex.Pattern.quote(word) + "(?!\\w)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(text).find();
     }
 
     @Test
@@ -295,6 +304,124 @@ class PdfRedactionTest {
         assertTrue(rectangles2.isEmpty());
 
         doc.close();
+    }
+
+    // test redaction of a person's name in the car insurance policy document
+    @Test
+    public void testCarInsurancePolicyNameRedaction() throws IOException {
+        // load our test PDF
+        String name = "Persis Bentote";
+        byte[] bytes = loadBinary("/CarInsurancePolicyCIP-211339.pdf");
+        assertTrue(bytes.length > 0);
+        PDDocument doc = Loader.loadPDF(bytes);
+
+        String textBefore = extractTextFromPDF(doc);
+        assertTrue(textBefore.contains(name), "Name should be present in the PDF before redaction");
+
+        // the word finder should locate the name (it occurs twice, both on page 1)
+        List<RectangleOnPage> rectangles = redactor.getRedactionRectangles(doc, Collections.singletonList(name));
+        assertEquals(2, rectangles.size(), "Should find both occurrences of the name");
+        for (RectangleOnPage rect : rectangles) {
+            assertEquals(1, rect.getPage());
+            assertTrue(rect.getWidth() > 0);
+            assertTrue(rect.getHeight() > 0);
+        }
+
+        redactor.redact(
+                doc,
+                Collections.singletonList(name),
+                null,
+                false
+        );
+
+        String textAfter = extractTextFromPDF(doc);
+
+        // the name must no longer be extractable from the document
+        assertFalse(textAfter.contains(name), "Name should be removed from the PDF");
+        assertFalse(textAfter.contains("Persis"), "First name should be removed from the PDF");
+        assertFalse(textAfter.contains("Bentote"), "Last name should be removed from the PDF");
+
+        // but unrelated text must survive the redaction
+        assertTrue(textAfter.contains("Insurance Company"), "Unrelated text should remain intact");
+        assertTrue(textAfter.contains("Policyholder"), "Unrelated text should remain intact");
+
+        // and the word finder should no longer find the name
+        List<RectangleOnPage> rectangles2 = redactor.getRedactionRectangles(doc, Collections.singletonList(name));
+        assertTrue(rectangles2.isEmpty(), "No rectangles should be found after redaction");
+
+        doc.close();
+    }
+
+    // Box placement: found rectangles must be in native (unrotated) page space, so the
+    // expected word centre is identical for every page rotation of the same content.
+    @Test
+    void testWordBoxPlacementWithPageRotation() throws IOException {
+        for (int rotation : new int[]{0, 90, 180, 270}) {
+            try (PDDocument doc = createTextPdf(rotation, "The quick brown fox jumps over the CONFIDENTIAL fence.")) {
+                // "CONFIDENTIAL" starts ~192.7pt into the string drawn at (200, 400), is ~88pt wide
+                assertBoxContains(doc, "CONFIDENTIAL", 436.7f, 403.5f, "page rotation " + rotation);
+            }
+        }
+    }
+
+    // Box placement for OCR-style documents: the text itself is drawn rotated and the
+    // page /Rotate matches, so it displays upright
+    @Test
+    void testWordBoxPlacementWithRotatedText() throws IOException {
+        float[][] expectedCenters = {
+                {90, 296.5f, 636.7f},
+                {180, 63.3f, 396.5f},
+                {270, 303.5f, 163.3f},
+        };
+        for (float[] expected : expectedCenters) {
+            int rotation = (int) expected[0];
+            try (PDDocument doc = new PDDocument()) {
+                PDPage page = new PDPage();
+                page.setRotation(rotation);
+                doc.addPage(page);
+                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                    cs.beginText();
+                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                    cs.setTextMatrix(org.apache.pdfbox.util.Matrix.getRotateInstance(Math.toRadians(rotation), 300, 400));
+                    cs.showText("The quick brown fox jumps over the CONFIDENTIAL fence.");
+                    cs.endText();
+                }
+                assertBoxContains(doc, "CONFIDENTIAL", expected[1], expected[2], "text direction " + rotation);
+            }
+        }
+    }
+
+    // Box placement when the cropBox origin is not (0, 0)
+    @Test
+    void testWordBoxPlacementWithOffsetCropBox() throws IOException {
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage(new org.apache.pdfbox.pdmodel.common.PDRectangle(100, 50, 612, 792));
+            doc.addPage(page);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.beginText();
+                cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                cs.newLineAtOffset(300, 450);
+                cs.showText("The quick brown fox jumps over the CONFIDENTIAL fence.");
+                cs.endText();
+            }
+            assertBoxContains(doc, "CONFIDENTIAL", 536.7f, 453.5f, "offset cropBox");
+        }
+    }
+
+    /** Asserts that the box found for the word contains the expected centre point. */
+    private void assertBoxContains(PDDocument doc, String word, float cx, float cy, String label) throws IOException {
+        List<RectangleOnPage> rects = redactor.getRedactionRectangles(doc, Collections.singletonList(word));
+        assertEquals(1, rects.size(), label + ": should find exactly one box");
+        RectangleOnPage r = rects.get(0);
+        assertTrue(r.getX() <= cx && cx <= r.getX() + r.getWidth(),
+                label + ": centre x " + cx + " not inside box x=[" + r.getX() + ", " + (r.getX() + r.getWidth()) + "]");
+        assertTrue(r.getY() <= cy && cy <= r.getY() + r.getHeight(),
+                label + ": centre y " + cy + " not inside box y=[" + r.getY() + ", " + (r.getY() + r.getHeight()) + "]");
+        // sanity: the box is word-sized, not line- or page-sized (width/height swap for vertical text)
+        float longSide = Math.max(r.getWidth(), r.getHeight());
+        float shortSide = Math.min(r.getWidth(), r.getHeight());
+        assertTrue(longSide < 120, label + ": box unexpectedly large: " + longSide);
+        assertTrue(shortSide < 30, label + ": box unexpectedly thick: " + shortSide);
     }
 
     //////////////////////////////////////////////////////////////////////////////////////////////////////////
