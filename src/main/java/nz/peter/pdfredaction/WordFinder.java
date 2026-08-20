@@ -37,10 +37,14 @@ class WordFinder extends PDFTextStripper {
         setSortByPosition(true); // Mandatory for rotated pages
         this.page = page;
 
-        // Pre-compile regex patterns with word boundaries (\b) and case insensitivity
+        // Pre-compile regex patterns with word boundaries (\b) and case insensitivity.
+        // UNICODE_CHARACTER_CLASS makes \w cover all Unicode letters (Java's \w is
+        // ASCII-only by default, so e.g. macrons would read as word boundaries); it
+        // also enables UNICODE_CASE so non-ASCII letters case-fold correctly.
         for (String word : targetWords) {
             if (word != null && !word.trim().isEmpty()) {
-                targetPatterns.add(Pattern.compile("(?<!\\w)" + Pattern.quote(word) + "(?!\\w)", Pattern.CASE_INSENSITIVE));
+                targetPatterns.add(Pattern.compile("(?<!\\w)" + Pattern.quote(word) + "(?!\\w)",
+                        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS));
             }
         }
     }

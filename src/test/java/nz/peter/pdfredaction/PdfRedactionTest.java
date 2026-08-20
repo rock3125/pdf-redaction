@@ -267,7 +267,8 @@ class PdfRedactionTest {
     /** whole-word, case-insensitive containment check (same boundary rule as the redactor) */
     private boolean containsWholeWord(String text, String word) {
         return java.util.regex.Pattern
-                .compile("(?<!\\w)" + java.util.regex.Pattern.quote(word) + "(?!\\w)", java.util.regex.Pattern.CASE_INSENSITIVE)
+                .compile("(?<!\\w)" + java.util.regex.Pattern.quote(word) + "(?!\\w)",
+                        java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.UNICODE_CHARACTER_CLASS)
                 .matcher(text).find();
     }
 
@@ -393,6 +394,33 @@ class PdfRedactionTest {
                     "Text after the redacted phrase must not shift vertically");
             assertEquals(before.getWidth(), after.getWidth(), 0.5,
                     "Text after the redacted phrase must keep its width");
+        }
+    }
+
+    // Java's \w is ASCII-only unless compiled with UNICODE_CHARACTER_CLASS, so letters
+    // with macrons (vero.pdf contains "Toka Tū Ake") would read as word boundaries:
+    // redacting the standalone word "T" must not eat the "T" of "Tū", and matching must
+    // case-fold non-ASCII letters ("TŪ AKE" must redact "Tū Ake").
+    @Test
+    public void testMacronLettersAreWordCharacters() throws IOException {
+        byte[] bytes = loadBinary("/vero.pdf");
+        assertTrue(bytes.length > 0);
+        try (PDDocument doc = Loader.loadPDF(bytes)) {
+            String before = extractTextFromPDF(doc);
+            assertTrue(before.contains("Toka Tū Ake"), "Macron phrase should be present before redaction");
+
+            // "T" as a standalone word must not match inside "Tū"
+            redactor.redact(doc, Collections.singletonList("T"), null, false);
+            String after = extractTextFromPDF(doc);
+            assertTrue(after.contains("Toka Tū Ake"),
+                    "'T' must not match inside 'Tū' - macron letters are word characters");
+
+            // non-ASCII letters must case-fold: redacting "TŪ AKE" removes "Tū Ake"
+            redactor.redact(doc, Collections.singletonList("TŪ AKE"), null, false);
+            String after2 = extractTextFromPDF(doc);
+            assertFalse(after2.contains("Tū Ake"), "'TŪ AKE' should case-fold and redact 'Tū Ake'");
+            assertFalse(after2.contains("Tū"), "'Tū' should be scrubbed");
+            assertTrue(after2.contains("Toka"), "Text before the redacted phrase should survive");
         }
     }
 

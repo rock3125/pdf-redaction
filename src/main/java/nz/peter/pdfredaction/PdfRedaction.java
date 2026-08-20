@@ -205,7 +205,11 @@ public class PdfRedaction {
                     regex.append(Pattern.quote(parts[p]));
                 }
                 regex.append("(?!\\w)");
-                scrubPatterns.add(Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE));
+                // UNICODE_CHARACTER_CLASS: \w must cover all Unicode letters (it is
+                // ASCII-only by default, so e.g. macrons would read as word boundaries);
+                // it also enables UNICODE_CASE for correct non-ASCII case folding.
+                scrubPatterns.add(Pattern.compile(regex.toString(),
+                        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS));
             }
         }
 
