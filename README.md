@@ -12,14 +12,14 @@ PDF-redaction/PDF-redactor is completely free.  Apache 2 licensed, completely op
 ## Include
 
 ```gradle
-implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.2'
+implementation 'nz.peter.pdfredaction:pdf-redaction:1.0.4'
 ```
 
 ```xml
 <dependency>
     <groupId>nz.peter.pdfredaction</groupId>
     <artifactId>pdf-redaction</artifactId>
-    <version>1.0.2</version>
+    <version>1.0.4</version>
 </dependency>
 ```
 
@@ -52,7 +52,7 @@ document.close();
 ## Build the JAR
 ```
 gradle jar
-# output: ./build/libs/pdf-redaction-1.0.2.jar
+# output: ./build/libs/pdf-redaction-1.0.4.jar
 ```
 
 ## publish to maven central
@@ -67,6 +67,7 @@ nano ~/.gradle/gradle.properties
 * Apache PDFBox 3.x.
 
 ## versions
+* 1.0.4 fixed surviving text shifting out of position when redacting words mid-line: removed glyphs are now replaced by kerning adjustments of equal width
 * 1.0.3 fixed whole-line over-redaction on subset fonts, word-boundary scrubbing, box placement for rotated text and offset cropBoxes, and scrubbing of words split across positioning operators
 * 1.0.2 added purple outline rects and fixed some issues with rotation
 * 1.0.1 fixed word boundaries for more complex entities such as telephone numbers

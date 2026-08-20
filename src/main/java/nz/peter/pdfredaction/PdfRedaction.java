@@ -13,6 +13,7 @@ package nz.peter.pdfredaction;
 
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSFloat;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.cos.COSString;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
@@ -306,12 +307,17 @@ public class PdfRedaction {
                     if (st.tm != null) translateTm(st, 0, -st.leading);
                     st.penX = 0;
                 }
+                st.ctxArray = null;
+                st.ctxTokenIndex = i;
                 showString(cosString, st);
 
             } else if (token instanceof COSArray array) {
                 for (int j = 0; j < array.size(); j++) {
                     COSBase element = array.get(j);
                     if (element instanceof COSString cosString) {
+                        st.ctxArray = array;
+                        st.ctxArrayIndex = j;
+                        st.ctxTokenIndex = -1;
                         showString(cosString, st);
                     } else if (element instanceof org.apache.pdfbox.cos.COSNumber num) {
                         // TJ adjustment: moves the pen; a large gap is a word separator
@@ -326,7 +332,11 @@ public class PdfRedaction {
         }
 
         // Catch any remaining text at the end of the stream
-        processTextSequence(st.activeTokens, st.blockText, scrubPatterns);
+        processTextSequence(st.activeTokens, st.blockText, scrubPatterns, st.modifiedRefs);
+
+        // Cut the flagged glyphs out of their show operations, substituting kerning
+        // adjustments of equal width so the surviving text keeps its exact position
+        applyStructuralEdits(tokens, st.modifiedRefs);
 
         // Rewrite the modified tokens back to the page stream
         PDStream newContents = new PDStream(document);
@@ -373,7 +383,7 @@ public class PdfRedaction {
         if (st.tm == null) {
             // Position unknown: process whatever is buffered, then buffer this string alone
             flushLine(st);
-            processCOSString(cosString, st.font, st.activeTokens, st.blockText);
+            processCOSString(cosString, st);
             return;
         }
 
@@ -416,7 +426,7 @@ public class PdfRedaction {
             }
         }
 
-        processCOSString(cosString, st.font, st.activeTokens, st.blockText);
+        processCOSString(cosString, st);
 
         st.penX += textAdvance(cosString, st);
         st.expectedX = st.tm[4] + st.penX * st.tm[0];
@@ -426,7 +436,7 @@ public class PdfRedaction {
 
     /** Processes and clears the buffered line. */
     private void flushLine(ScrubState st) {
-        processTextSequence(st.activeTokens, st.blockText, st.patterns);
+        processTextSequence(st.activeTokens, st.blockText, st.patterns, st.modifiedRefs);
         st.activeTokens.clear();
         st.blockText.setLength(0);
         st.lineBasis = null;
@@ -479,30 +489,30 @@ public class PdfRedaction {
         float lineCoord;            // baseline coordinate (f for horizontal, e for vertical)
         float expectedX, expectedY; // device point where a continuation show would start
         boolean haveExpected;
+
+        COSArray ctxArray;          // TJ array holding the string being shown, or null
+        int ctxArrayIndex;          // element index of the string within ctxArray
+        int ctxTokenIndex = -1;     // token index of the string when it is a Tj/'/" operand
+        List<TokenRef> modifiedRefs = new ArrayList<>(); // refs whose glyphs were flagged
     }
 
     /**
-     * Processes a COSString object by decoding its contents using the provided font,
-     * appending the decoded text to the provided StringBuilder, and creating a
-     * mapping between the COSString and its decoded text. The mapping is stored in
-     * a list of TokenRef objects for further processing.
+     * Processes a COSString object by decoding its contents using the current font,
+     * appending the decoded text to the block buffer, and creating a mapping between
+     * the COSString and its decoded text. The mapping (including the string's location
+     * in the stream and each glyph's advance width) is stored as a TokenRef for
+     * further processing.
      *
      * @param cosString The COSString object to be processed. Represents the original
      *                  tokenized content from the PDF document.
-     * @param font The PDFont object used to decode the COSString. Must not be null.
-     * @param activeTokens A list of TokenRef objects that will be updated with a
-     *                     reference to the decoded content of the COSString.
-     * @param blockText A StringBuilder that accumulates the decoded text content of
-     *                  all processed COSStrings for the current context.
+     * @param st The current scrub state: supplies the font and spacing used to decode
+     *           and measure the string, the token buffers to append to, and the
+     *           stream location (TJ array element or Tj/'/" operand) of the string.
      */
-    private void processCOSString(
-            COSString cosString,
-            PDFont font,
-            List<TokenRef> activeTokens,
-            StringBuilder blockText
-    ) {
+    private void processCOSString(COSString cosString, ScrubState st) {
         // check for nulls
-        if (font == null || cosString == null || activeTokens == null || blockText == null) return;
+        if (st == null || st.font == null || cosString == null) return;
+        PDFont font = st.font;
 
         try {
             // Read character codes sequentially, remembering the byte span of each code so that
@@ -512,6 +522,7 @@ public class PdfRedaction {
             InputStream in = new ByteArrayInputStream(bytes);
             StringBuilder decodedBuilder = new StringBuilder();
             List<int[]> codeSpans = new ArrayList<>();
+            List<Float> codeAdvances = new ArrayList<>();
             List<Integer> charToCode = new ArrayList<>();
 
             while (in.available() > 0) {
@@ -522,6 +533,20 @@ public class PdfRedaction {
 
                 int codeIndex = codeSpans.size();
                 codeSpans.add(new int[]{spanStart, spanEnd});
+
+                // Advance of this glyph in 1/1000 text-space units (the unit TJ adjustments
+                // use), including char/word spacing so a substituted kerning adjustment
+                // reproduces the exact pen movement of the glyph it replaces.
+                float advance;
+                try {
+                    advance = font.getWidth(code);
+                } catch (Exception ex) {
+                    advance = 500f;
+                }
+                if (st.fontSize > 0) {
+                    advance += (st.charSpacing + (code == 32 ? st.wordSpacing : 0)) * 1000f / st.fontSize;
+                }
+                codeAdvances.add(advance);
 
                 String unicode = font.toUnicode(code);
                 if (unicode != null && !unicode.isEmpty()) {
@@ -539,15 +564,22 @@ public class PdfRedaction {
                 ref.token = cosString;
                 ref.originalBytes = bytes;
                 ref.codeSpans = codeSpans;
+                ref.codeAdvances = new float[codeAdvances.size()];
+                for (int k = 0; k < codeAdvances.size(); k++) {
+                    ref.codeAdvances[k] = codeAdvances.get(k);
+                }
                 ref.charToCode = new int[charToCode.size()];
                 for (int k = 0; k < charToCode.size(); k++) {
                     ref.charToCode[k] = charToCode.get(k);
                 }
-                ref.globalStart = blockText.length();
-                blockText.append(decoded);
-                ref.globalEnd = blockText.length();
+                ref.parentArray = st.ctxArray;
+                ref.parentIndex = st.ctxArrayIndex;
+                ref.tokenIndex = st.ctxTokenIndex;
+                ref.globalStart = st.blockText.length();
+                st.blockText.append(decoded);
+                ref.globalEnd = st.blockText.length();
                 ref.chars = decoded.toCharArray();
-                activeTokens.add(ref);
+                st.activeTokens.add(ref);
             }
         } catch (Exception e) {
             // Ignore decoding failures for unsupported subsets
@@ -564,14 +596,18 @@ public class PdfRedaction {
      * @param blockText A StringBuilder containing the combined text extracted from the tokens.
      *                  This is used as the primary source for identifying occurrences of the
      *                  words to scrub.
-     * @param wordsToScrub A list of strings representing the words to be scrubbed from the text
-     *                     sequence. Matching is performed in a case-insensitive manner, and tokens
-     *                     containing matched words are updated to reflect the redaction.
+     * @param scrubPatterns Patterns for the words to be scrubbed from the text sequence.
+     *                      Matching is performed in a case-insensitive manner, and tokens
+     *                      containing matched words are flagged for redaction.
+     * @param modifiedRefs Collector for tokens whose glyphs were flagged; the actual stream
+     *                     rewrite happens later in {@code applyStructuralEdits} so kerning
+     *                     substitutes can be spliced in without disturbing the token walk.
      */
     private void processTextSequence(
             List<TokenRef> activeTokens,
             StringBuilder blockText,
-            List<Pattern> scrubPatterns
+            List<Pattern> scrubPatterns,
+            List<TokenRef> modifiedRefs
     ) {
         // null check
         if (activeTokens == null || blockText == null || scrubPatterns == null) return;
@@ -598,9 +634,9 @@ public class PdfRedaction {
             }
         }
 
-        // Rebuild each modified token from the original bytes, dropping the byte spans of the
-        // glyph codes whose characters were flagged. This keeps untouched glyphs byte-identical
-        // and never needs font.encode(), which fails on many subset fonts.
+        // Flag the glyph codes whose characters were matched. The stream itself is rewritten
+        // later (applyStructuralEdits) so removed glyphs can be replaced by kerning
+        // adjustments of the same width, keeping the surviving text in place.
         for (TokenRef ref : activeTokens) {
             boolean[] removeCode = new boolean[ref.codeSpans.size()];
             boolean modified = false;
@@ -613,16 +649,113 @@ public class PdfRedaction {
             }
 
             if (modified) {
-                ByteArrayOutputStream survivingBytes = new ByteArrayOutputStream();
-                for (int c = 0; c < ref.codeSpans.size(); c++) {
-                    if (!removeCode[c]) {
-                        int[] span = ref.codeSpans.get(c);
-                        survivingBytes.write(ref.originalBytes, span[0], span[1] - span[0]);
-                    }
-                }
-                ref.token.setValue(survivingBytes.toByteArray());
+                ref.removeCode = removeCode;
+                modifiedRefs.add(ref);
             }
         }
+    }
+
+    /**
+     * Rewrites the show operations of all flagged tokens, cutting the redacted glyphs out of
+     * the original bytes (untouched glyphs stay byte-identical - font.encode() is never
+     * needed, which fails on many subset fonts) and substituting each removed run with a TJ
+     * kerning adjustment of equal width so that the surviving text keeps its exact position.
+     *
+     * @param tokens The full parsed token list of the page's content stream, edited in place.
+     * @param modifiedRefs The tokens flagged by {@code processTextSequence}, each knowing its
+     *                     location in the stream (TJ array element, or Tj/'/" operand).
+     */
+    private void applyStructuralEdits(List<Object> tokens, List<TokenRef> modifiedRefs) {
+        if (tokens == null || modifiedRefs == null || modifiedRefs.isEmpty()) return;
+
+        List<TokenRef> arrayRefs = new ArrayList<>();
+        List<TokenRef> operandRefs = new ArrayList<>();
+        for (TokenRef ref : modifiedRefs) {
+            if (ref.parentArray != null) arrayRefs.add(ref);
+            else if (ref.tokenIndex >= 0) operandRefs.add(ref);
+        }
+
+        // Strings inside TJ arrays: splice the segments into the array in place of the
+        // string. Descending index order keeps pending indices valid within each array.
+        arrayRefs.sort((r1, r2) -> Integer.compare(r2.parentIndex, r1.parentIndex));
+        for (TokenRef ref : arrayRefs) {
+            List<COSBase> segments = buildSegments(ref);
+            ref.parentArray.remove(ref.parentIndex);
+            for (int k = segments.size() - 1; k >= 0; k--) {
+                ref.parentArray.add(ref.parentIndex, segments.get(k));
+            }
+        }
+
+        // Operands of Tj / ' / ": the show must become a TJ so kerning substitutes can be
+        // embedded; ' and " first replicate their side effects (T*, and Tw/Tc for ").
+        // Descending index order keeps pending token indices valid across insertions.
+        operandRefs.sort((r1, r2) -> Integer.compare(r2.tokenIndex, r1.tokenIndex));
+        for (TokenRef ref : operandRefs) {
+            int idx = ref.tokenIndex;
+            if (idx + 1 >= tokens.size() || !(tokens.get(idx + 1) instanceof Operator op)) continue;
+
+            COSArray arr = new COSArray();
+            for (COSBase segment : buildSegments(ref)) {
+                arr.add(segment);
+            }
+
+            switch (op.getName()) {
+                case "Tj" -> {
+                    tokens.set(idx, arr);
+                    tokens.set(idx + 1, Operator.getOperator("TJ"));
+                }
+                case "'" -> { // (str) '  =  T* (str) Tj
+                    tokens.set(idx, arr);
+                    tokens.set(idx + 1, Operator.getOperator("TJ"));
+                    tokens.add(idx, Operator.getOperator("T*"));
+                }
+                case "\"" -> { // aw ac (str) "  =  aw Tw ac Tc T* (str) Tj
+                    if (idx < 2) continue;
+                    Object aw = tokens.get(idx - 2);
+                    Object ac = tokens.get(idx - 1);
+                    List<Object> replacement = List.of(
+                            aw, Operator.getOperator("Tw"),
+                            ac, Operator.getOperator("Tc"),
+                            Operator.getOperator("T*"),
+                            arr, Operator.getOperator("TJ")
+                    );
+                    tokens.subList(idx - 2, idx + 2).clear();
+                    tokens.addAll(idx - 2, replacement);
+                }
+                default -> { /* not a show operator - leave the stream untouched */ }
+            }
+        }
+    }
+
+    /**
+     * Builds the TJ-style replacement for one flagged show string: the surviving glyph runs
+     * as byte-identical COSStrings, with each removed run replaced by a negative kerning
+     * number whose magnitude equals the removed glyphs' total advance (a TJ adjustment of
+     * -w moves the pen forward exactly like a glyph of width w).
+     */
+    private List<COSBase> buildSegments(TokenRef ref) {
+        List<COSBase> segments = new ArrayList<>();
+        ByteArrayOutputStream current = new ByteArrayOutputStream();
+        float pendingAdvance = 0;
+        for (int c = 0; c < ref.codeSpans.size(); c++) {
+            if (ref.removeCode[c]) {
+                if (current.size() > 0) {
+                    segments.add(new COSString(current.toByteArray()));
+                    current.reset();
+                }
+                pendingAdvance += ref.codeAdvances[c];
+            } else {
+                if (pendingAdvance != 0) {
+                    segments.add(new COSFloat(-pendingAdvance));
+                    pendingAdvance = 0;
+                }
+                int[] span = ref.codeSpans.get(c);
+                current.write(ref.originalBytes, span[0], span[1] - span[0]);
+            }
+        }
+        if (current.size() > 0) segments.add(new COSString(current.toByteArray()));
+        if (pendingAdvance != 0) segments.add(new COSFloat(-pendingAdvance));
+        return segments;
     }
 
     /**
@@ -691,10 +824,17 @@ public class PdfRedaction {
         COSString token;
         byte[] originalBytes;    // the token's raw bytes as parsed from the stream
         List<int[]> codeSpans;   // per glyph code: {startByte, endByte} within originalBytes
+        float[] codeAdvances;    // per glyph code: advance in 1/1000 text-space (TJ) units
         int[] charToCode;        // per decoded char: index into codeSpans it came from
         int globalStart;
         int globalEnd;
         char[] chars;
+
+        // location of the string in the stream, for the structural rewrite
+        COSArray parentArray;    // TJ array containing the string, or null
+        int parentIndex;         // element index within parentArray
+        int tokenIndex = -1;     // token index when the string is a Tj/'/" operand
+        boolean[] removeCode;    // per glyph code: flagged for removal (null if untouched)
     }
 
 }

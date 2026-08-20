@@ -352,6 +352,60 @@ class PdfRedactionTest {
         doc.close();
     }
 
+    // Redacting a phrase in the middle of a kerned TJ line (vero.pdf page 2:
+    // "Welcome to your Residential Contents Policy – insurance for your contents")
+    // must not shift the surviving text: removed glyphs are replaced by kerning
+    // adjustments of equal width, so the rest of the sentence stays exactly in place.
+    @Test
+    public void testVeroPhraseRedactionKeepsSurroundingTextInPlace() throws IOException {
+        String phrase = "Residential Contents";
+        byte[] bytes = loadBinary("/vero.pdf");
+        assertTrue(bytes.length > 0);
+        try (PDDocument doc = Loader.loadPDF(bytes)) {
+            PDFTextStripper stripper = new PDFTextStripper();
+            stripper.setStartPage(2);
+            stripper.setEndPage(2);
+            String textBefore = stripper.getText(doc);
+            assertTrue(textBefore.contains("Welcome to your Residential Contents Policy"));
+
+            // where does the text after the phrase sit before redaction?
+            java.awt.geom.Rectangle2D before = findWordBoxOnPage(doc, 2, "insurance for your contents");
+            assertNotNull(before, "Follow-on text should be locatable before redaction");
+
+            redactor.redact(doc, Collections.singletonList(phrase), null, false);
+
+            stripper = new PDFTextStripper();
+            stripper.setStartPage(2);
+            stripper.setEndPage(2);
+            String textAfter = stripper.getText(doc);
+
+            // the phrase must be scrubbed, the rest of the sentence must survive
+            assertFalse(textAfter.contains(phrase), "Phrase should be removed from the PDF");
+            assertTrue(textAfter.contains("insurance for your contents"),
+                    "Text after the phrase should survive redaction");
+
+            // and the surviving text must not have moved
+            java.awt.geom.Rectangle2D after = findWordBoxOnPage(doc, 2, "insurance for your contents");
+            assertNotNull(after, "Follow-on text should still be locatable after redaction");
+            assertEquals(before.getX(), after.getX(), 0.5,
+                    "Text after the redacted phrase must not shift horizontally");
+            assertEquals(before.getY(), after.getY(), 0.5,
+                    "Text after the redacted phrase must not shift vertically");
+            assertEquals(before.getWidth(), after.getWidth(), 0.5,
+                    "Text after the redacted phrase must keep its width");
+        }
+    }
+
+    /** Finds the bounding box of the first occurrence of a phrase on the given 1-based page. */
+    private java.awt.geom.Rectangle2D findWordBoxOnPage(PDDocument doc, int pageNum, String phrase) throws IOException {
+        WordFinder finder = new WordFinder(doc.getPage(pageNum - 1), Collections.singletonList(phrase));
+        finder.setStartPage(pageNum);
+        finder.setEndPage(pageNum);
+        finder.getText(doc);
+        List<java.awt.geom.Rectangle2D> boxes = finder.getFoundBoundingBoxes();
+        return boxes.isEmpty() ? null : boxes.get(0);
+    }
+
     // Box placement: found rectangles must be in native (unrotated) page space, so the
     // expected word centre is identical for every page rotation of the same content.
     @Test
