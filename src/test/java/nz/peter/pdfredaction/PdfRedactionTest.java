@@ -459,6 +459,84 @@ class PdfRedactionTest {
         }
     }
 
+    // Annotation content is invisible to PDFTextStripper: appearance streams, sticky-note
+    // /Contents, and form-field /V values get neither a box nor a scrub from the page-text
+    // path. A matched annotation must have its appearance glyphs scrubbed, its dictionary
+    // strings cleaned, its rectangle boxed, and its appearance painted black (annotations
+    // render on top of the page content, above the page-level box).
+    @Test
+    void testAnnotationAppearanceStreamRedaction() throws IOException {
+        String secret = "AGENT_SMITH";
+        try (PDDocument doc = new PDDocument()) {
+            PDPage page = new PDPage();
+            doc.addPage(page);
+            try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                cs.beginText();
+                cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                cs.newLineAtOffset(50, 700);
+                cs.showText("Page body text");
+                cs.endText();
+            }
+
+            // a free-text style annotation whose appearance stream draws the secret
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationFreeText freeText =
+                    new org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationFreeText();
+            freeText.setRectangle(new org.apache.pdfbox.pdmodel.common.PDRectangle(100, 500, 300, 40));
+            freeText.setContents("Reviewed by " + secret + " today");
+            freeText.setAppearance(new org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary());
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream appearance =
+                    new org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream(doc);
+            appearance.setBBox(new org.apache.pdfbox.pdmodel.common.PDRectangle(0, 0, 300, 40));
+            appearance.setResources(new org.apache.pdfbox.pdmodel.PDResources());
+            try (org.apache.pdfbox.pdmodel.PDFormContentStream cs =
+                         new org.apache.pdfbox.pdmodel.PDFormContentStream(appearance)) {
+                cs.beginText();
+                cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                cs.newLineAtOffset(10, 15);
+                cs.showText("Reviewed by " + secret + " today");
+                cs.endText();
+            }
+            freeText.getAppearance().setNormalAppearance(appearance);
+
+            // a form-field widget carrying the secret as its /V value
+            org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget widget =
+                    new org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget();
+            widget.setRectangle(new org.apache.pdfbox.pdmodel.common.PDRectangle(100, 400, 300, 20));
+            widget.getCOSObject().setName(org.apache.pdfbox.cos.COSName.FT, "Tx");
+            widget.getCOSObject().setString(org.apache.pdfbox.cos.COSName.V, secret);
+
+            page.setAnnotations(Arrays.asList(freeText, widget));
+
+            // annotation text is NOT visible to the page-text machinery
+            String before = extractTextFromPDF(doc);
+            assertFalse(before.contains(secret), "Annotation text should not appear in page extraction");
+            String appearanceBefore = new String(appearance.getContentStream().toByteArray(),
+                    java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertTrue(appearanceBefore.contains(secret), "Appearance stream should contain the secret");
+
+            long[] blackBefore = countBlackPixelsPerPage(doc);
+
+            redactor.redact(doc, Collections.singletonList(secret), null, false);
+
+            // the appearance stream's glyphs must be gone
+            String appearanceAfter = new String(appearance.getContentStream().toByteArray(),
+                    java.nio.charset.StandardCharsets.ISO_8859_1);
+            assertFalse(appearanceAfter.contains(secret), "Appearance stream glyphs must be scrubbed");
+            assertTrue(appearanceAfter.contains("Reviewed by"), "Surrounding appearance text should survive");
+
+            // the annotation dictionary strings must be cleaned
+            assertFalse(freeText.getContents().contains(secret), "/Contents must be scrubbed");
+            assertFalse(appearanceAfter.isEmpty());
+            String widgetValue = widget.getCOSObject().getString(org.apache.pdfbox.cos.COSName.V);
+            assertFalse(widgetValue.contains(secret), "Form field /V value must be scrubbed");
+
+            // both annotations must be visually redacted (appearance painted / page box drawn)
+            long[] blackAfter = countBlackPixelsPerPage(doc);
+            assertTrue(blackAfter[0] > blackBefore[0] + 500,
+                    "The page should show black boxes over the matched annotations");
+        }
+    }
+
     /** Renders each page at 72 DPI and counts its pure-black pixels. */
     private long[] countBlackPixelsPerPage(PDDocument doc) throws IOException {
         org.apache.pdfbox.rendering.PDFRenderer renderer = new org.apache.pdfbox.rendering.PDFRenderer(doc);

@@ -13,14 +13,24 @@ package nz.peter.pdfredaction;
 
 import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSFloat;
+import org.apache.pdfbox.cos.COSInteger;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSStream;
 import org.apache.pdfbox.cos.COSString;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdfwriter.ContentStreamWriter;
 import org.apache.pdfbox.pdmodel.*;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceEntry;
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -31,8 +41,11 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -68,6 +81,11 @@ public class PdfRedaction {
 
         int numPages = document.getNumberOfPages();
 
+        List<Pattern> scrubPatterns = (words == null || words.isEmpty())
+                ? Collections.emptyList() : buildScrubPatterns(words);
+        Map<COSStream, Boolean> visitedAppearances = new HashMap<>();
+        Set<COSStream> paintedAppearances = new HashSet<>();
+
         // Find all redaction boxes for every page BEFORE any content is modified:
         // scrubbing a Form XObject shared between pages removes its text document-wide,
         // which would erase later pages' matches before their boxes were found.
@@ -95,6 +113,15 @@ public class PdfRedaction {
                 textStripper.setEndPage(pageNum);
                 textStripper.getText(document);
                 pageRedactionBoxes.addAll(textStripper.getFoundBoundingBoxes());
+            }
+
+            // Annotations: PDFTextStripper never sees annotation text (appearance streams,
+            // sticky-note contents, form-field values), so WordFinder produces no boxes for
+            // it. Scrub each annotation here and box a matched annotation over its whole
+            // rectangle - the value of a matched form field IS the sensitive datum.
+            if (!scrubPatterns.isEmpty()) {
+                pageRedactionBoxes.addAll(processAnnotations(
+                        document, page, scrubPatterns, outlineOnly, visitedAppearances, paintedAppearances));
             }
         }
 
@@ -204,9 +231,26 @@ public class PdfRedaction {
         PDFStreamParser parser = new PDFStreamParser(page);
         List<Object> tokens = parser.parse();
 
-        // Same word-boundary rule as WordFinder, so the scrubbed text always matches the drawn
-        // boxes. Whitespace in a search phrase is matched flexibly (\s*) because inter-word
-        // spacing is often just a positioning gap with no actual space glyph in the stream.
+        List<Pattern> scrubPatterns = buildScrubPatterns(wordsToScrub);
+
+        scrubTokenList(document, tokens, page.getResources(), scrubPatterns, null, new HashSet<>(), false);
+
+        // Rewrite the modified tokens back to the page stream
+        PDStream newContents = new PDStream(document);
+        try (OutputStream out = newContents.createOutputStream(COSName.FLATE_DECODE)) {
+            ContentStreamWriter tokenWriter = new ContentStreamWriter(out);
+            tokenWriter.writeTokens(tokens); // Modifications were done in-place
+        }
+        page.setContents(newContents);
+    }
+
+    /**
+     * Builds the scrub patterns for a list of words. Same word-boundary rule as WordFinder,
+     * so the scrubbed text always matches the drawn boxes. Whitespace in a search phrase is
+     * matched flexibly (\s*) because inter-word spacing is often just a positioning gap with
+     * no actual space glyph in the stream.
+     */
+    private List<Pattern> buildScrubPatterns(List<String> wordsToScrub) {
         List<Pattern> scrubPatterns = new ArrayList<>();
         for (String word : wordsToScrub) {
             if (word != null && !word.trim().isEmpty()) {
@@ -224,16 +268,7 @@ public class PdfRedaction {
                         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS));
             }
         }
-
-        scrubTokenList(document, tokens, page.getResources(), scrubPatterns, null, new HashSet<>());
-
-        // Rewrite the modified tokens back to the page stream
-        PDStream newContents = new PDStream(document);
-        try (OutputStream out = newContents.createOutputStream(COSName.FLATE_DECODE)) {
-            ContentStreamWriter tokenWriter = new ContentStreamWriter(out);
-            tokenWriter.writeTokens(tokens); // Modifications were done in-place
-        }
-        page.setContents(newContents);
+        return scrubPatterns;
     }
 
     /**
@@ -249,6 +284,9 @@ public class PdfRedaction {
      *                  inherits the graphics state (font, spacing) in effect at its Do.
      * @param visitedForms Guard set of form streams already scrubbed in this pass: shared
      *                     forms are scrubbed once, and reference cycles cannot recurse forever.
+     * @param dryRun If true, nothing is persisted (used for detection in outline-only mode):
+     *               the token list is still edited in memory, but nested forms are not
+     *               written back to their streams.
      * @return true if any glyphs were removed from this stream.
      */
     private boolean scrubTokenList(
@@ -257,7 +295,8 @@ public class PdfRedaction {
             PDResources resources,
             List<Pattern> scrubPatterns,
             ScrubState inherited,
-            java.util.Set<org.apache.pdfbox.cos.COSStream> visitedForms
+            Set<COSStream> visitedForms,
+            boolean dryRun
     ) throws IOException {
         // Producers routinely split single words - and even single glyph runs - across
         // positioning operators (Td/Tm), across text objects (BT..ET), and across TJ kerning
@@ -352,7 +391,7 @@ public class PdfRedaction {
                         // otherwise get a box (WordFinder descends) but keep its glyphs.
                         Object nameTok = i >= 1 ? tokens.get(i - 1) : null;
                         if (resources != null && nameTok instanceof COSName xobjectName) {
-                            scrubFormXObject(document, resources, xobjectName, scrubPatterns, st, visitedForms);
+                            scrubFormXObject(document, resources, xobjectName, scrubPatterns, st, visitedForms, dryRun);
                         }
                     }
                     default -> { /* other operators do not affect text position tracking */ }
@@ -418,27 +457,201 @@ public class PdfRedaction {
             COSName xobjectName,
             List<Pattern> scrubPatterns,
             ScrubState invokerState,
-            java.util.Set<org.apache.pdfbox.cos.COSStream> visitedForms
+            Set<COSStream> visitedForms,
+            boolean dryRun
     ) {
         try {
-            org.apache.pdfbox.pdmodel.graphics.PDXObject xobject = resources.getXObject(xobjectName);
-            if (!(xobject instanceof org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject form)) return;
+            PDXObject xobject = resources.getXObject(xobjectName);
+            if (!(xobject instanceof PDFormXObject form)) return;
 
-            org.apache.pdfbox.cos.COSStream formStream = form.getCOSObject();
+            COSStream formStream = form.getCOSObject();
             if (!visitedForms.add(formStream)) return;
 
             PDResources formResources = form.getResources() != null ? form.getResources() : resources;
             List<Object> formTokens = new PDFStreamParser(form).parse();
 
-            boolean modified = scrubTokenList(document, formTokens, formResources, scrubPatterns, invokerState, visitedForms);
+            boolean modified = scrubTokenList(document, formTokens, formResources, scrubPatterns, invokerState, visitedForms, dryRun);
 
-            if (modified) {
+            if (modified && !dryRun) {
                 try (OutputStream out = formStream.createOutputStream(COSName.FLATE_DECODE)) {
                     new ContentStreamWriter(out).writeTokens(formTokens);
                 }
             }
         } catch (IOException e) {
             // An unparseable form is left untouched; its text was not extractable either
+        }
+    }
+
+    /**
+     * Detects and (unless outlineOnly) scrubs the requested words inside a page's
+     * annotations: their appearance streams (normal, rollover and down states, including
+     * per-state sub-dictionaries), their /Contents and rich-text /RC strings, and - for
+     * form-field widgets - the /V and /DV values on the widget or its ancestor field
+     * dictionaries. A matched annotation's whole rectangle is returned as a redaction box
+     * (the value of a matched field IS the sensitive datum), and its appearance streams are
+     * additionally painted black, because annotations render ON TOP of the page content
+     * where the regular black box is drawn.
+     *
+     * @return the page-space rectangles of the annotations that contained a match.
+     */
+    private List<Rectangle2D> processAnnotations(
+            PDDocument document,
+            PDPage page,
+            List<Pattern> scrubPatterns,
+            boolean outlineOnly,
+            Map<COSStream, Boolean> visitedAppearances,
+            Set<COSStream> paintedAppearances
+    ) throws IOException {
+        List<Rectangle2D> matchedRects = new ArrayList<>();
+
+        for (PDAnnotation annotation : page.getAnnotations()) {
+            if (annotation == null) continue;
+            boolean matched = false;
+
+            for (PDAppearanceStream appearance : appearanceStreams(annotation)) {
+                matched |= scrubAppearanceStream(document, appearance, scrubPatterns, outlineOnly, visitedAppearances);
+            }
+
+            matched |= scrubAnnotationStrings(annotation.getCOSObject(), scrubPatterns, outlineOnly);
+
+            if (matched) {
+                PDRectangle rect = annotation.getRectangle();
+                if (rect != null) {
+                    matchedRects.add(new Rectangle2D.Float(
+                            rect.getLowerLeftX(), rect.getLowerLeftY(), rect.getWidth(), rect.getHeight()));
+                }
+                if (!outlineOnly) {
+                    paintAnnotationBlack(annotation, paintedAppearances);
+                }
+            }
+        }
+        return matchedRects;
+    }
+
+    /** Collects all appearance streams of an annotation across all states. */
+    private List<PDAppearanceStream> appearanceStreams(PDAnnotation annotation) {
+        List<PDAppearanceStream> result = new ArrayList<>();
+        try {
+            PDAppearanceDictionary ap = annotation.getAppearance();
+            if (ap == null) return result;
+            PDAppearanceEntry[] entries = {
+                    ap.getNormalAppearance(), ap.getRolloverAppearance(), ap.getDownAppearance()
+            };
+            for (PDAppearanceEntry entry : entries) {
+                if (entry == null) continue;
+                if (entry.isStream()) {
+                    result.add(entry.getAppearanceStream());
+                } else if (entry.isSubDictionary()) {
+                    result.addAll(entry.getSubDictionary().values());
+                }
+            }
+        } catch (Exception e) {
+            // malformed appearance dictionary - nothing to scrub
+        }
+        return result;
+    }
+
+    /**
+     * Scrubs one annotation appearance stream (a Form XObject) in place. The visited map
+     * remembers the result per stream so shared appearances are scrubbed once but every
+     * annotation referencing them still learns whether they contained a match.
+     */
+    private boolean scrubAppearanceStream(
+            PDDocument document,
+            PDAppearanceStream appearance,
+            List<Pattern> scrubPatterns,
+            boolean outlineOnly,
+            Map<COSStream, Boolean> visitedAppearances
+    ) {
+        try {
+            COSStream cosStream = appearance.getCOSObject();
+            Boolean prior = visitedAppearances.get(cosStream);
+            if (prior != null) return prior;
+
+            List<Object> tokens = new PDFStreamParser(appearance).parse();
+            boolean modified = scrubTokenList(document, tokens, appearance.getResources(),
+                    scrubPatterns, null, new HashSet<>(), outlineOnly);
+
+            if (modified && !outlineOnly) {
+                try (OutputStream out = cosStream.createOutputStream(COSName.FLATE_DECODE)) {
+                    new ContentStreamWriter(out).writeTokens(tokens);
+                }
+            }
+            visitedAppearances.put(cosStream, modified);
+            return modified;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Scrubs matching text out of the annotation's string entries: /Contents and rich-text
+     * /RC on the annotation itself, and /V (value) and /DV (default value) on the widget's
+     * dictionary and its ancestor field dictionaries - a form field keeps its value in the
+     * field dictionary, so scrubbing only the drawn appearance would leave the value
+     * extractable (and viewers would regenerate the appearance from it).
+     */
+    private boolean scrubAnnotationStrings(COSDictionary annotationDict, List<Pattern> scrubPatterns, boolean outlineOnly) {
+        boolean matched = false;
+        matched |= scrubStringEntry(annotationDict, COSName.CONTENTS, scrubPatterns, outlineOnly);
+        matched |= scrubStringEntry(annotationDict, COSName.RC, scrubPatterns, outlineOnly);
+
+        COSDictionary dict = annotationDict;
+        int depthGuard = 0;
+        while (dict != null && depthGuard++ < 32) {
+            matched |= scrubStringEntry(dict, COSName.V, scrubPatterns, outlineOnly);
+            matched |= scrubStringEntry(dict, COSName.DV, scrubPatterns, outlineOnly);
+            dict = dict.getCOSDictionary(COSName.PARENT);
+        }
+        return matched;
+    }
+
+    /** Removes pattern matches from one string entry of a dictionary; reports if any matched. */
+    private boolean scrubStringEntry(COSDictionary dict, COSName key, List<Pattern> scrubPatterns, boolean outlineOnly) {
+        if (!(dict.getDictionaryObject(key) instanceof COSString cosString)) return false;
+        String value = cosString.getString();
+        String scrubbed = value;
+        for (Pattern pattern : scrubPatterns) {
+            scrubbed = pattern.matcher(scrubbed).replaceAll("");
+        }
+        if (scrubbed.equals(value)) return false;
+        if (!outlineOnly) {
+            dict.setItem(key, new COSString(scrubbed));
+        }
+        return true;
+    }
+
+    /**
+     * Appends a filled black rectangle covering the BBox to each of the annotation's
+     * appearance streams. Annotations render on top of the page content, so the page-level
+     * black box alone could be hidden behind an opaque appearance.
+     */
+    private void paintAnnotationBlack(PDAnnotation annotation, Set<COSStream> paintedAppearances) {
+        for (PDAppearanceStream appearance : appearanceStreams(annotation)) {
+            try {
+                COSStream cosStream = appearance.getCOSObject();
+                if (!paintedAppearances.add(cosStream)) continue;
+                PDRectangle bbox = appearance.getBBox();
+                if (bbox == null) continue;
+
+                List<Object> tokens = new PDFStreamParser(appearance).parse();
+                tokens.add(Operator.getOperator("q"));
+                tokens.add(COSInteger.ZERO);
+                tokens.add(Operator.getOperator("g"));
+                tokens.add(new COSFloat(bbox.getLowerLeftX()));
+                tokens.add(new COSFloat(bbox.getLowerLeftY()));
+                tokens.add(new COSFloat(bbox.getWidth()));
+                tokens.add(new COSFloat(bbox.getHeight()));
+                tokens.add(Operator.getOperator("re"));
+                tokens.add(Operator.getOperator("f"));
+                tokens.add(Operator.getOperator("Q"));
+
+                try (OutputStream out = cosStream.createOutputStream(COSName.FLATE_DECODE)) {
+                    new ContentStreamWriter(out).writeTokens(tokens);
+                }
+            } catch (IOException e) {
+                // unpaintable appearance - the page-level box still covers the rectangle
+            }
         }
     }
 
