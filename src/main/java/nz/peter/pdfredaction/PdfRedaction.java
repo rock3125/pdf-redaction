@@ -324,12 +324,12 @@ public class PdfRedaction {
                         st.ctxTokenIndex = -1;
                         showString(cosString, st);
                     } else if (element instanceof org.apache.pdfbox.cos.COSNumber num) {
-                        // TJ adjustment: moves the pen; a large gap is a word separator
-                        float shift = -num.floatValue() / 1000f * st.fontSize * st.hScale;
-                        st.penX += shift;
-                        if (Math.abs(shift) > WORD_GAP_EM * st.fontSize && !st.blockText.isEmpty()) {
-                            st.blockText.append(' ');
-                        }
+                        // TJ adjustment: only moves the pen. Whether the NET gap up to the
+                        // next show is a word separator is decided by the show-time gap
+                        // check in showString - judging this number in isolation would
+                        // misread letter-spaced text (Word emits a huge Tc compensated by
+                        // an equally huge TJ number per glyph) as one gap per letter.
+                        st.penX += -num.floatValue() / 1000f * st.fontSize * st.hScale;
                     }
                 }
             }
@@ -423,7 +423,11 @@ public class PdfRedaction {
                 gapDevice = startY - st.expectedY;
                 scale = st.tm[1];
             }
-            float gapText = gapDevice / scale;
+            // Measure the gap from the INK end of the previous show, not its advance end:
+            // the trailing char/word spacing after the last glyph is often compensated by
+            // a TJ adjustment (Word emits huge Tc offset by equally huge TJ numbers for
+            // letter-spaced text), and that compensation is not a word gap.
+            float gapText = gapDevice / scale + st.lastTrailingSpacing;
             float fontSize = st.fontSize > 0 ? st.fontSize : 10f;
             if (Math.abs(gapText) > WORD_GAP_EM * fontSize) {
                 st.blockText.append(' ');
@@ -453,6 +457,7 @@ public class PdfRedaction {
      * inaccurate width cannot corrupt the output stream.
      */
     private float textAdvance(COSString s, ScrubState st) {
+        st.lastTrailingSpacing = 0;
         if (st.font == null) return 0;
         float total = 0;
         try {
@@ -466,6 +471,8 @@ public class PdfRedaction {
                     width = 500f;
                 }
                 total += width / 1000f * st.fontSize + st.charSpacing + (code == 32 ? st.wordSpacing : 0);
+                // spacing after the string's last glyph, for the ink-end gap measurement
+                st.lastTrailingSpacing = (st.charSpacing + (code == 32 ? st.wordSpacing : 0)) * st.hScale;
             }
         } catch (Exception e) {
             // best effort - see javadoc
@@ -493,6 +500,7 @@ public class PdfRedaction {
         float lineCoord;            // baseline coordinate (f for horizontal, e for vertical)
         float expectedX, expectedY; // device point where a continuation show would start
         boolean haveExpected;
+        float lastTrailingSpacing;  // char/word spacing after the previous show's last glyph
 
         COSArray ctxArray;          // TJ array holding the string being shown, or null
         int ctxArrayIndex;          // element index of the string within ctxArray

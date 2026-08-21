@@ -397,6 +397,36 @@ class PdfRedactionTest {
         }
     }
 
+    // Word emits letter-spaced text as a huge Tc compensated by equally huge TJ numbers
+    // per glyph ("John A. Karousos" on page 3 of this document). Neither the TJ numbers
+    // nor the Tc overshoot may be read as word gaps, or the name assembles as
+    // "J o h n ..." in the scrub buffer and never matches.
+    @Test
+    public void testWordLetterSpacedNameRedaction() throws IOException {
+        String name = "John A. Karousos";
+        byte[] bytes = loadBinary("/microsoft-word-48428.doc.pdf");
+        assertTrue(bytes.length > 0);
+        try (PDDocument doc = Loader.loadPDF(bytes)) {
+            String textBefore = extractTextFromPDF(doc);
+            assertTrue(textBefore.contains(name), "Name should be present before redaction");
+
+            List<RectangleOnPage> rectangles = redactor.getRedactionRectangles(doc, Collections.singletonList(name));
+            assertEquals(1, rectangles.size(), "Should find the name once");
+            assertEquals(3, rectangles.get(0).getPage());
+
+            redactor.redact(doc, Collections.singletonList(name), null, false);
+
+            String textAfter = extractTextFromPDF(doc);
+            assertFalse(textAfter.contains(name), "Name should be removed from the PDF");
+            assertFalse(textAfter.contains("Karousos"), "Last name should be removed from the PDF");
+
+            // the other letter-spaced lines of the signature block must survive intact
+            assertTrue(textAfter.contains("Assistant Chief"), "Unrelated text should remain intact");
+            assertTrue(textAfter.contains("Audio Division"), "Letter-spaced text should remain intact");
+            assertTrue(textAfter.contains("Media Bureau"), "Letter-spaced text should remain intact");
+        }
+    }
+
     // Java's \w is ASCII-only unless compiled with UNICODE_CHARACTER_CLASS, so letters
     // with macrons (vero.pdf contains "Toka Tū Ake") would read as word boundaries:
     // redacting the standalone word "T" must not eat the "T" of "Tū", and matching must
