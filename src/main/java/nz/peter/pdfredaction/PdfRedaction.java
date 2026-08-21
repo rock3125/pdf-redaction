@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -67,12 +68,16 @@ public class PdfRedaction {
 
         int numPages = document.getNumberOfPages();
 
+        // Find all redaction boxes for every page BEFORE any content is modified:
+        // scrubbing a Form XObject shared between pages removes its text document-wide,
+        // which would erase later pages' matches before their boxes were found.
+        List<List<Rectangle2D>> boxesPerPage = new ArrayList<>(numPages);
         for (int i = 0; i < numPages; i++) {
             int pageNum = i + 1;
             PDPage page = document.getPage(i);
-            if (page == null) continue;
-
             List<Rectangle2D> pageRedactionBoxes = new ArrayList<>();
+            boxesPerPage.add(pageRedactionBoxes);
+            if (page == null) continue;
 
             // Add user-defined coordinate boxes for this page
             if (areas != null) {
@@ -91,6 +96,13 @@ public class PdfRedaction {
                 textStripper.getText(document);
                 pageRedactionBoxes.addAll(textStripper.getFoundBoundingBoxes());
             }
+        }
+
+        for (int i = 0; i < numPages; i++) {
+            PDPage page = document.getPage(i);
+            if (page == null) continue;
+
+            List<Rectangle2D> pageRedactionBoxes = boxesPerPage.get(i);
 
             // nothing to redact?
             if (pageRedactionBoxes.isEmpty()) {
@@ -213,8 +225,40 @@ public class PdfRedaction {
             }
         }
 
-        PDResources resources = page.getResources();
+        scrubTokenList(document, tokens, page.getResources(), scrubPatterns, null, new HashSet<>());
 
+        // Rewrite the modified tokens back to the page stream
+        PDStream newContents = new PDStream(document);
+        try (OutputStream out = newContents.createOutputStream(COSName.FLATE_DECODE)) {
+            ContentStreamWriter tokenWriter = new ContentStreamWriter(out);
+            tokenWriter.writeTokens(tokens); // Modifications were done in-place
+        }
+        page.setContents(newContents);
+    }
+
+    /**
+     * Scrubs one parsed content stream (a page or a Form XObject), editing the token list in
+     * place, and descends into any Form XObjects the stream invokes via the Do operator.
+     *
+     * @param document The document, used to embed rewritten streams.
+     * @param tokens The parsed tokens of this content stream; modified in place.
+     * @param resources The resource dictionary this stream's names resolve against (the form's
+     *                  own resources when present, otherwise inherited from the invoker).
+     * @param scrubPatterns The word patterns to scrub.
+     * @param inherited The invoking stream's text state, or null for a page stream: a form
+     *                  inherits the graphics state (font, spacing) in effect at its Do.
+     * @param visitedForms Guard set of form streams already scrubbed in this pass: shared
+     *                     forms are scrubbed once, and reference cycles cannot recurse forever.
+     * @return true if any glyphs were removed from this stream.
+     */
+    private boolean scrubTokenList(
+            PDDocument document,
+            List<Object> tokens,
+            PDResources resources,
+            List<Pattern> scrubPatterns,
+            ScrubState inherited,
+            java.util.Set<org.apache.pdfbox.cos.COSStream> visitedForms
+    ) throws IOException {
         // Producers routinely split single words - and even single glyph runs - across
         // positioning operators (Td/Tm), across text objects (BT..ET), and across TJ kerning
         // adjustments. Flushing the match buffer at any of those would leave the split word
@@ -225,6 +269,14 @@ public class PdfRedaction {
         // words from different columns or tab stops never fuse together.
         ScrubState st = new ScrubState();
         st.patterns = scrubPatterns;
+        if (inherited != null) {
+            st.font = inherited.font;
+            st.fontSize = inherited.fontSize;
+            st.charSpacing = inherited.charSpacing;
+            st.wordSpacing = inherited.wordSpacing;
+            st.hScale = inherited.hScale;
+            st.leading = inherited.leading;
+        }
 
         for (int i = 0; i < tokens.size(); i++) {
             Object token = tokens.get(i);
@@ -295,6 +347,14 @@ public class PdfRedaction {
                         Float v = numberAt(tokens, i - 1);
                         if (v != null) st.hScale = v / 100f;
                     }
+                    case "Do" -> {
+                        // Descend into Form XObjects: text drawn inside a form would
+                        // otherwise get a box (WordFinder descends) but keep its glyphs.
+                        Object nameTok = i >= 1 ? tokens.get(i - 1) : null;
+                        if (resources != null && nameTok instanceof COSName xobjectName) {
+                            scrubFormXObject(document, resources, xobjectName, scrubPatterns, st, visitedForms);
+                        }
+                    }
                     default -> { /* other operators do not affect text position tracking */ }
                 }
             } else if (token instanceof COSString cosString) {
@@ -342,13 +402,44 @@ public class PdfRedaction {
         // adjustments of equal width so the surviving text keeps its exact position
         applyStructuralEdits(tokens, st.modifiedRefs);
 
-        // Rewrite the modified tokens back to the page stream
-        PDStream newContents = new PDStream(document);
-        try (OutputStream out = newContents.createOutputStream(COSName.FLATE_DECODE)) {
-            ContentStreamWriter tokenWriter = new ContentStreamWriter(out);
-            tokenWriter.writeTokens(tokens); // Modifications were done in-place
+        return !st.modifiedRefs.isEmpty();
+    }
+
+    /**
+     * Scrubs the content stream of one Form XObject in place. The rewritten stream keeps the
+     * form's COSStream object identity (only its data is replaced), so every page or stream
+     * referencing the shared form sees the scrubbed content, and its dictionary entries
+     * (BBox, Matrix, Resources) are untouched. Forms already scrubbed in this pass are
+     * skipped via the visited set, which also breaks reference cycles.
+     */
+    private void scrubFormXObject(
+            PDDocument document,
+            PDResources resources,
+            COSName xobjectName,
+            List<Pattern> scrubPatterns,
+            ScrubState invokerState,
+            java.util.Set<org.apache.pdfbox.cos.COSStream> visitedForms
+    ) {
+        try {
+            org.apache.pdfbox.pdmodel.graphics.PDXObject xobject = resources.getXObject(xobjectName);
+            if (!(xobject instanceof org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject form)) return;
+
+            org.apache.pdfbox.cos.COSStream formStream = form.getCOSObject();
+            if (!visitedForms.add(formStream)) return;
+
+            PDResources formResources = form.getResources() != null ? form.getResources() : resources;
+            List<Object> formTokens = new PDFStreamParser(form).parse();
+
+            boolean modified = scrubTokenList(document, formTokens, formResources, scrubPatterns, invokerState, visitedForms);
+
+            if (modified) {
+                try (OutputStream out = formStream.createOutputStream(COSName.FLATE_DECODE)) {
+                    new ContentStreamWriter(out).writeTokens(formTokens);
+                }
+            }
+        } catch (IOException e) {
+            // An unparseable form is left untouched; its text was not extractable either
         }
-        page.setContents(newContents);
     }
 
 

@@ -397,6 +397,83 @@ class PdfRedactionTest {
         }
     }
 
+    // Text drawn inside a Form XObject: WordFinder (PDFTextStripper) descends into forms,
+    // so a box is found - the scrubber must descend too, or the glyphs survive under the
+    // box. The form is shared by two pages to verify that a shared form is scrubbed once
+    // document-wide AND that every page using it still gets its black box drawn (boxes are
+    // collected for all pages before any content is modified).
+    @Test
+    void testFormXObjectTextRedaction() throws IOException {
+        try (PDDocument doc = new PDDocument()) {
+            org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject form =
+                    new org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject(doc);
+            form.setBBox(new org.apache.pdfbox.pdmodel.common.PDRectangle(0, 0, 400, 50));
+            form.setResources(new org.apache.pdfbox.pdmodel.PDResources());
+            try (org.apache.pdfbox.pdmodel.PDFormContentStream cs =
+                         new org.apache.pdfbox.pdmodel.PDFormContentStream(form)) {
+                cs.beginText();
+                cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                cs.newLineAtOffset(10, 20);
+                cs.showText("This stamp contains SECRET_WORD inside");
+                cs.endText();
+            }
+
+            for (int p = 0; p < 2; p++) {
+                PDPage page = new PDPage();
+                doc.addPage(page);
+                try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+                    cs.beginText();
+                    cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                    cs.newLineAtOffset(50, 700);
+                    cs.showText("Page body text");
+                    cs.endText();
+                    cs.saveGraphicsState();
+                    cs.transform(org.apache.pdfbox.util.Matrix.getTranslateInstance(100, 400));
+                    cs.drawForm(form);
+                    cs.restoreGraphicsState();
+                }
+            }
+
+            String before = extractTextFromPDF(doc);
+            assertTrue(before.contains("SECRET_WORD"), "Form text should be extractable before redaction");
+
+            List<RectangleOnPage> rects = redactor.getRedactionRectangles(doc, Collections.singletonList("SECRET_WORD"));
+            assertEquals(2, rects.size(), "The shared form's text should be found on both pages");
+
+            long[] blackBefore = countBlackPixelsPerPage(doc);
+
+            redactor.redact(doc, Collections.singletonList("SECRET_WORD"), null, false);
+
+            String after = extractTextFromPDF(doc);
+            assertFalse(after.contains("SECRET_WORD"), "Text inside the Form XObject must be scrubbed");
+            assertTrue(after.contains("This stamp contains"), "Form text before the word should survive");
+            assertTrue(after.contains("inside"), "Form text after the word should survive");
+            assertTrue(after.contains("Page body text"), "Page-level text should survive");
+
+            // both pages must show a black box where the form's text was
+            long[] blackAfter = countBlackPixelsPerPage(doc);
+            for (int p = 0; p < 2; p++) {
+                assertTrue(blackAfter[p] > blackBefore[p] + 500,
+                        "Page " + (p + 1) + " should have a redaction box drawn over the shared form");
+            }
+        }
+    }
+
+    /** Renders each page at 72 DPI and counts its pure-black pixels. */
+    private long[] countBlackPixelsPerPage(PDDocument doc) throws IOException {
+        org.apache.pdfbox.rendering.PDFRenderer renderer = new org.apache.pdfbox.rendering.PDFRenderer(doc);
+        long[] counts = new long[doc.getNumberOfPages()];
+        for (int p = 0; p < counts.length; p++) {
+            BufferedImage image = renderer.renderImageWithDPI(p, 72);
+            for (int y = 0; y < image.getHeight(); y++) {
+                for (int x = 0; x < image.getWidth(); x++) {
+                    if ((image.getRGB(x, y) & 0x00FFFFFF) == 0) counts[p]++;
+                }
+            }
+        }
+        return counts;
+    }
+
     // Word emits letter-spaced text as a huge Tc compensated by equally huge TJ numbers
     // per glyph ("John A. Karousos" on page 3 of this document). Neither the TJ numbers
     // nor the Tc overshoot may be read as word gaps, or the name assembles as

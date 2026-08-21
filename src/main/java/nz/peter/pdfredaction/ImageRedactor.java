@@ -15,6 +15,7 @@ import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImage;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
@@ -103,14 +104,17 @@ class ImageRedactor extends PDFGraphicsStreamEngine {
         }
 
         if (modified) {
-            // Replace the image in the page resources with the newly redacted image
+            // Replace the image with the newly redacted image in the resources of the
+            // stream being processed: for an image drawn inside a Form XObject that is
+            // the form's own resource dictionary, not the page's.
             PDImageXObject newImage = LosslessFactory.createFromImage(document, bufferedImage);
+            PDResources resources = getResources() != null ? getResources() : page.getResources();
 
             // Find the COSName under which this image is registered and overwrite it
-            for (COSName name : page.getResources().getXObjectNames()) {
-                if (page.getResources().isImageXObject(name)) {
-                    if (page.getResources().getXObject(name).getCOSObject() == image.getCOSObject()) {
-                        page.getResources().put(name, newImage);
+            for (COSName name : resources.getXObjectNames()) {
+                if (resources.isImageXObject(name)) {
+                    if (resources.getXObject(name).getCOSObject() == image.getCOSObject()) {
+                        resources.put(name, newImage);
                         break;
                     }
                 }
