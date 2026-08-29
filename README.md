@@ -1,4 +1,9 @@
 # PDF-Redaction / PDF-Redactor
+
+![A claim file before and after redaction: five field values blacked out, and the identification photograph masked](docs/redaction-example.png)
+
+*A synthetic claim file, before and after. Five field values and the photograph were redacted; the vehicle line was not, and is untouched. The blacked-out words are gone from the content stream and the photograph has been re-encoded with its pixels blacked out — copying text out of the redacted file returns nothing where the boxes are.*
+
 PDF-Redaction/Redactor is a Java-based library designed to physically remove sensitive information, including PII, from PDF documents building upon the Apache PDFBox library for processing PDFs. Unlike simple annotation tools that merely place a black box over content, this engine intercepts the PDF content stream to modify or delete the underlying text and mask image data. As well as removing all metadata from a PDF document.
 
 PDF-redaction/PDF-redactor is completely free.  Apache 2 licensed, completely open-source for you to use as you like.  PDF-redaction/redactor does not require any online services, it is a pure Java library.
