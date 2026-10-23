@@ -72,7 +72,7 @@ nano ~/.gradle/gradle.properties
 * Apache PDFBox 3.x.
 
 ## versions
-* 1.0.8 annotations are now redacted: appearance streams are scrubbed and painted black, /Contents, rich-text and form-field values (/V, /DV) are cleaned, and matched annotations are boxed
+* 1.0.8 annotations are now redacted: appearance streams are scrubbed and painted black, /Contents, rich-text and form-field values (/V, /DV) are cleaned, and matched annotations are boxed.
 * 1.0.7 text and images inside Form XObjects are now redacted (scrubber descends into forms, shared forms handled document-wide with boxes on every page)
 * 1.0.6 fixed redaction of letter-spaced text (Word documents emitting large character spacing compensated by TJ kerning) being missed by the scrubber
 * 1.0.5 word matching now treats all Unicode letters as word characters (macrons no longer read as word boundaries) and case-folds non-ASCII letters
